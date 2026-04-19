@@ -95,7 +95,9 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_signal(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⏳ Считаю...")
     try:
-        s = await ctx.application.loop.run_in_executor(None, calc_signals)
+        import asyncio
+loop = asyncio.get_event_loop()
+s = await loop.run_in_executor(None, calc_signals)
         await update.message.reply_text(format_report(s), parse_mode="Markdown")
     except Exception as e:
         await update.message.reply_text(f"Ошибка: {e}")
