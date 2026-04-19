@@ -50,16 +50,14 @@ def calc_signals():
             "ru4": ru4, "ru1": ru1, "up": usd[-1] if usd else 0}
 
 def make_report(s):
-    ei = "🟢" if s["si"]=="IMOEX" else "🔴"
-    eu = "🟢" if s["su"]=="USD" else "🔴"
+    ei = "🟢 ПОЗИЦИЯ ОТКРЫТА" if s["si"]=="IMOEX" else "⚪ ВНЕ ПОЗИЦИИ"
+    eu = "🟢 ПОЗИЦИЯ ОТКРЫТА" if s["su"]=="USD" else "⚪ ВНЕ ПОЗИЦИИ"
     t = datetime.now().strftime("%d.%m.%Y %H:%M")
-    return (f"📊 Сигналы — {t}\n\n"
-            f"{ei} IMOEX — позиция: {s['si']}\n"
-            f"   IMOEX 4нед: {s['ri4']:+.1f}%\n"
-            f"   RUGBI 4нед: {s['rr4']:+.1f}%\n\n"
-            f"{eu} USDRUB — позиция: {s['su']}\n"
-            f"   USD/RUB: {s['up']:.2f}\n"
-            f"   USD 4нед: {s['ru4']:+.1f}% | 1нед: {s['ru1']:+.1f}%\n\n"
+    return (
+        f"📊 Сигналы — {t}\n\n"
+        f"IMOEX\n{ei}\n\n"
+        f"USDRUB\n{eu}\n\n"
+        f"USD/RUB: {s['up']:.2f}"
             f"Не является инвест. рекомендацией")
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
