@@ -40,14 +40,19 @@ def get_moex_weekly(ticker, weeks=28):
 def get_moex_today(ticker):
     url = (f"https://iss.moex.com/iss/engines/stock/markets/index/"
            f"boards/SNDX/securities/{ticker}.json"
-           f"?iss.meta=off&securities.columns=SECID,LASTVALUE")
+           f"?iss.meta=off&iss.only=marketdata"
+           f"&marketdata.columns=SECID,CURRENTVALUE,LASTVALUE")
     try:
-        rows = requests.get(url, timeout=10).json()["securities"]["data"]
+        data = requests.get(url, timeout=10).json()
+        rows = data["marketdata"]["data"]
         for r in rows:
-            if r[0] == ticker and r[1]:
-                return float(r[1])
+            if r[0] == ticker:
+                # CURRENTVALUE — живая цена, LASTVALUE — последнее закрытие
+                val = r[1] if r[1] else r[2]
+                return float(val) if val else None
         return None
-    except:
+    except Exception as e:
+        log.error(f"MOEX today {ticker}: {e}")
         return None
 
 def get_usdrub_weekly(weeks=28):
