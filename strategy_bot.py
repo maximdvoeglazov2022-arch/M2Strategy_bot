@@ -97,16 +97,19 @@ def get_yahoo_weekly(ticker, weeks=28):
         log.error(f"Yahoo {ticker}: {e}"); return []
 
 def get_yahoo_today(ticker):
-    url = (f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
-           f"?interval=1d&range=5d")
-    try:
-        data = requests.get(url, headers={"User-Agent":"Mozilla/5.0"},
-                            timeout=15).json()
-        cls = data["chart"]["result"][0]["indicators"]["quote"][0]["close"]
-        vals = [x for x in cls if x is not None]
-        return vals[-1] if vals else None
-    except:
-        return None
+    for interval, range_ in [("1d","5d"), ("1h","1d"), ("2m","1d")]:
+        try:
+            url = (f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+                   f"?interval={interval}&range={range_}")
+            data = requests.get(
+                url, headers={"User-Agent":"Mozilla/5.0"}, timeout=15).json()
+            cls = data["chart"]["result"][0]["indicators"]["quote"][0]["close"]
+            vals = [x for x in cls if x is not None]
+            if vals:
+                return round(vals[-1], 2)
+        except:
+            continue
+    return None
 
 def P(data): return [x[1] for x in data]
 def D(data): return [x[0] for x in data]
@@ -143,7 +146,11 @@ def calc_all():
 
     # Дневные цены — для актуального P&L
     spy_now   = get_yahoo_today("SPY")   or (ps[-1] if ps else 0)
-    gld_now   = get_yahoo_today("GLD")   or (pg[-1] if pg else 0)
+    gld_now   = get_yahoo_today("GLD")
+if not gld_now:
+    gld_now = pg[-1] if pg else 0
+else:
+    log.info(f"GLD дневная цена: {gld_now}")
     imoex_now = get_moex_today("IMOEX") or (pi[-1] if pi else 0)
     usd_now   = get_usdrub_today()       or (pu[-1] if pu else 0)
 
