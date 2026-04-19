@@ -53,12 +53,12 @@ def make_report(s):
     ei = "🟢 ПОЗИЦИЯ ОТКРЫТА" if s["si"]=="IMOEX" else "⚪ ВНЕ ПОЗИЦИИ"
     eu = "🟢 ПОЗИЦИЯ ОТКРЫТА" if s["su"]=="USD" else "⚪ ВНЕ ПОЗИЦИИ"
     t = datetime.now().strftime("%d.%m.%Y %H:%M")
-    return (
+   return (
         f"📊 Сигналы — {t}\n\n"
         f"IMOEX\n{ei}\n\n"
         f"USDRUB\n{eu}\n\n"
         f"USD/RUB: {s['up']:.2f}"
-            f"Не является инвест. рекомендацией")
+    )
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
