@@ -1,0 +1,639 @@
+"""
+Telegram бот — сигналы по 4 стратегиям
+========================================
+Стратегии:
+  1. SPY  vs UUP/IEF   — недельный сигнал + asymmetric lookback (порог -8%, 2 мес)
+  2. GLD  vs YCS       — недельный сигнал + asymmetric lookback (порог -8%, 2 мес)
+  3. IMOEX vs RUGBI    — недельный сигнал + asymmetric lookback (порог -8%, 2 мес) + trailing 3%
+  4. USDRUB vs RUGBI   — двойной сигнал 4М+1М + trailing 5% + недельное окно выхода
+
+Источники данных:
+  - MOEX ISS API (бесплатно, без регистрации): IMOEX, RGBITR, USDRUB
+  - Yahoo Finance: SPY, GLD, UUP, IEF, YCS
+
+Запуск:
+  pip install python-telegram-bot requests yfinance pandas schedule
+  python strategy_bot.py
+
+Расписание: каждую пятницу в 21:00 МСК (после закрытия рынков)
+Команды бота: /status /signal /history /help
+"""
+
+import os
+import json
+import logging
+import requests
+import yfinance as yf
+import pandas as pd
+import schedule
+import time
+import threading
+from datetime import datetime, timedelta, date
+from pathlib import Path
+from telegram import Update, Bot
+from telegram.ext import Application, CommandHandler, ContextTypes
+
+# ─────────────────────────────────────────────────────────────
+# КОНФИГУРАЦИЯ — заполни перед запуском
+# ─────────────────────────────────────────────────────────────
+TELEGRAM_TOKEN = "8647551119:AAEmUOfbQR9xRxalXJRycZzUM--p87N94-U"      # от @BotFather
+CHAT_ID        = "304109124"          # свой chat_id (узнать через /start у @userinfobot)
+STATE_FILE     = "bot_state.json"        # файл с последними сигналами и NAV
+
+logging.basicConfig(
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    level=logging.INFO,
+    handlers=[logging.StreamHandler(), logging.FileHandler("bot.log")]
+)
+log = logging.getLogger(__name__)
+
+# ─────────────────────────────────────────────────────────────
+# ПАРАМЕТРЫ СТРАТЕГИЙ
+# ─────────────────────────────────────────────────────────────
+STRATEGIES = {
+    "SPY": {
+        "name": "S&P 500 (SPY vs UUP/IEF)",
+        "main":    "SPY",
+        "alts":    ["UUP", "IEF"],
+        "source":  "yahoo",
+        "lookback_weeks": 4,        # основной сигнал
+        "asym_lb_thresh": -8.0,     # asymm lookback: порог 2-мес падения %
+        "asym_lb_min_cash": 1,      # мин месяцев в кэше
+        "trailing_pct": 0,          # нет трейлинга для SPY
+        "currency": "USD",
+    },
+    "GLD": {
+        "name": "Золото (GLD vs YCS)",
+        "main":    "GLD",
+        "alts":    ["YCS"],
+        "source":  "yahoo",
+        "lookback_weeks": 4,
+        "asym_lb_thresh": -8.0,
+        "asym_lb_min_cash": 1,
+        "trailing_pct": 0,
+        "currency": "USD",
+    },
+    "IMOEX": {
+        "name": "IMOEX (IMOEX vs RUGBI)",
+        "main":    "IMOEX",
+        "alts":    ["RGBITR"],
+        "source":  "moex",
+        "lookback_weeks": 4,
+        "asym_lb_thresh": -8.0,
+        "asym_lb_min_cash": 1,
+        "trailing_pct": 3.0,        # trailing stop 3%
+        "currency": "RUB",
+    },
+    "USDRUB": {
+        "name": "USDRUB vs RUGBI (двойной сигнал)",
+        "main":    "USD000UTSTOM",   # USDRUB на MOEX
+        "alts":    ["RGBITR"],
+        "source":  "moex",
+        "lookback_weeks": 4,         # первичный сигнал
+        "lookback_weeks_2": 1,       # вторичный (двойной)
+        "trailing_pct": 5.0,         # trailing stop 5%
+        "weekly_exit_window": True,  # недельное окно на выход
+        "currency": "RUB",
+    },
+}
+
+# ─────────────────────────────────────────────────────────────
+# ЗАГРУЗКА ДАННЫХ
+# ─────────────────────────────────────────────────────────────
+
+def fetch_yahoo(ticker: str, weeks: int = 26) -> pd.Series:
+    """Недельные цены закрытия с Yahoo Finance."""
+    end = datetime.today()
+    start = end - timedelta(weeks=weeks + 4)
+    try:
+        df = yf.download(ticker, start=start.strftime("%Y-%m-%d"),
+                         end=end.strftime("%Y-%m-%d"), interval="1wk",
+                         progress=False, auto_adjust=True)
+        if df.empty:
+            log.warning(f"Yahoo: нет данных для {ticker}")
+            return pd.Series(dtype=float)
+        return df["Close"].squeeze().dropna()
+    except Exception as e:
+        log.error(f"Yahoo fetch error {ticker}: {e}")
+        return pd.Series(dtype=float)
+
+
+def fetch_moex_index(ticker: str, weeks: int = 26) -> pd.Series:
+    """
+    Недельные данные с MOEX ISS API.
+    Тикеры: IMOEX, RGBITR, USD000UTSTOM и т.д.
+    """
+    end = datetime.today()
+    start = end - timedelta(weeks=weeks + 8)
+    url = (
+        f"https://iss.moex.com/iss/history/engines/stock/markets/index/"
+        f"boards/SNDX/securities/{ticker}.json"
+        f"?from={start.strftime('%Y-%m-%d')}"
+        f"&till={end.strftime('%Y-%m-%d')}"
+        f"&iss.meta=off&history.columns=TRADEDATE,CLOSE"
+    )
+    # USDRUB — валютный рынок
+    if ticker == "USD000UTSTOM":
+        url = (
+            f"https://iss.moex.com/iss/history/engines/currency/markets/selt/"
+            f"boards/CETS/securities/{ticker}.json"
+            f"?from={start.strftime('%Y-%m-%d')}"
+            f"&till={end.strftime('%Y-%m-%d')}"
+            f"&iss.meta=off&history.columns=TRADEDATE,CLOSE"
+        )
+    try:
+        r = requests.get(url, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+        rows = data.get("history", {}).get("data", [])
+        if not rows:
+            log.warning(f"MOEX ISS: нет данных для {ticker}")
+            return pd.Series(dtype=float)
+        df = pd.DataFrame(rows, columns=["date", "close"])
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.dropna().set_index("date").sort_index()
+        # Ресемплируем в недельные (пятница)
+        weekly = df["close"].resample("W-FRI").last().dropna()
+        return weekly
+    except Exception as e:
+        log.error(f"MOEX fetch error {ticker}: {e}")
+        return pd.Series(dtype=float)
+
+
+def get_price_series(ticker: str, source: str, weeks: int = 26) -> pd.Series:
+    if source == "yahoo":
+        return fetch_yahoo(ticker, weeks)
+    else:
+        return fetch_moex_index(ticker, weeks)
+
+# ─────────────────────────────────────────────────────────────
+# РАСЧЁТ СИГНАЛОВ
+# ─────────────────────────────────────────────────────────────
+
+def momentum_return(series: pd.Series, weeks: int) -> float:
+    """Накопленный return за последние N недель."""
+    if len(series) < weeks + 1:
+        return 0.0
+    return float(series.iloc[-1] / series.iloc[-(weeks + 1)] - 1) * 100
+
+
+def monthly_return_last_n(series: pd.Series, months: int = 2) -> float:
+    """Приблизительный return за последние N месяцев (~4 недели = 1 месяц)."""
+    weeks = months * 4
+    if len(series) < weeks + 1:
+        return 0.0
+    return float(series.iloc[-1] / series.iloc[-(weeks + 1)] - 1) * 100
+
+
+def compute_signal_spy_gld(cfg: dict, state: dict) -> dict:
+    """Сигнал для SPY и GLD с asymmetric lookback."""
+    key = cfg["main"]
+    source = cfg["source"]
+    lb = cfg["lookback_weeks"]
+    thresh = cfg["asym_lb_thresh"]
+
+    main_s = get_price_series(cfg["main"], source)
+    alt_returns = {}
+    for alt in cfg["alts"]:
+        s = get_price_series(alt, source)
+        alt_returns[alt] = momentum_return(s, lb)
+
+    main_ret = momentum_return(main_s, lb)
+
+    # Основной momentum-сигнал
+    best_alt_ret = max(alt_returns.values()) if alt_returns else -999
+    base_signal = "MAIN" if main_ret >= best_alt_ret else "ALT"
+
+    # Asymmetric lookback: если в ALT, но было сильное падение и сейчас рост
+    asym_triggered = False
+    if base_signal == "ALT":
+        prev_2m_ret = monthly_return_last_n(main_s, 2)
+        cash_months = state.get(f"{key}_cash_months", 0)
+        current_month_pos = (main_s.iloc[-1] > main_s.iloc[-5]) if len(main_s) >= 5 else False
+        if prev_2m_ret <= thresh and cash_months >= cfg["asym_lb_min_cash"] and current_month_pos:
+            base_signal = "MAIN"
+            asym_triggered = True
+            log.info(f"{key}: ASYMM LB triggered! 2м={prev_2m_ret:.1f}%, cash_streak={cash_months}")
+
+    # Обновляем счётчик месяцев в кэше
+    if base_signal == "ALT":
+        state[f"{key}_cash_months"] = state.get(f"{key}_cash_months", 0) + 1
+    else:
+        state[f"{key}_cash_months"] = 0
+
+    return {
+        "signal": base_signal,
+        "main_ticker": cfg["main"],
+        "main_ret": round(main_ret, 2),
+        "alt_returns": {k: round(v, 2) for k, v in alt_returns.items()},
+        "asym_triggered": asym_triggered,
+        "cash_months": state.get(f"{key}_cash_months", 0),
+        "prev_2m_ret": round(monthly_return_last_n(main_s, 2), 2),
+    }
+
+
+def compute_signal_imoex(cfg: dict, state: dict) -> dict:
+    """Сигнал для IMOEX с asymmetric lookback + trailing stop."""
+    key = "IMOEX"
+    lb = cfg["lookback_weeks"]
+    thresh = cfg["asym_lb_thresh"]
+    trailing = cfg["trailing_pct"]
+
+    imoex_s = get_price_series("IMOEX", "moex")
+    rugbi_s = get_price_series("RGBITR", "moex")
+
+    imoex_ret = momentum_return(imoex_s, lb)
+    rugbi_ret = momentum_return(rugbi_s, lb)
+
+    base_signal = "MAIN" if imoex_ret >= rugbi_ret else "ALT"
+    asym_triggered = False
+    trailing_exit = False
+
+    # Asymmetric lookback
+    if base_signal == "ALT":
+        prev_2m = monthly_return_last_n(imoex_s, 2)
+        cash_months = state.get(f"{key}_cash_months", 0)
+        current_pos = (imoex_s.iloc[-1] > imoex_s.iloc[-5]) if len(imoex_s) >= 5 else False
+        if prev_2m <= thresh and cash_months >= cfg["asym_lb_min_cash"] and current_pos:
+            base_signal = "MAIN"
+            asym_triggered = True
+            state[f"{key}_override"] = True
+            state[f"{key}_override_peak"] = float(imoex_s.iloc[-1])
+
+    # Trailing stop для override-позиции
+    if state.get(f"{key}_override") and base_signal == "MAIN":
+        peak = state.get(f"{key}_override_peak", float(imoex_s.iloc[-1]))
+        current = float(imoex_s.iloc[-1])
+        if current > peak:
+            state[f"{key}_override_peak"] = current
+        elif current < peak * (1 - trailing / 100):
+            state[f"{key}_override"] = False
+            base_signal = "ALT"
+            trailing_exit = True
+            log.info(f"IMOEX: trailing stop hit! current={current:.0f}, peak={peak:.0f}")
+
+    if base_signal == "ALT":
+        state[f"{key}_cash_months"] = state.get(f"{key}_cash_months", 0) + 1
+        if not asym_triggered:
+            state[f"{key}_override"] = False
+    else:
+        state[f"{key}_cash_months"] = 0
+
+    return {
+        "signal": base_signal,
+        "main_ticker": "IMOEX",
+        "imoex_ret": round(imoex_ret, 2),
+        "rugbi_ret": round(rugbi_ret, 2),
+        "asym_triggered": asym_triggered,
+        "trailing_exit": trailing_exit,
+        "override_active": state.get(f"{key}_override", False),
+        "cash_months": state.get(f"{key}_cash_months", 0),
+        "prev_2m_ret": round(monthly_return_last_n(imoex_s, 2), 2),
+    }
+
+
+def compute_signal_usdrub(cfg: dict, state: dict) -> dict:
+    """Двойной сигнал USDRUB vs RUGBI + trailing 5% + недельное окно."""
+    key = "USDRUB"
+    lb1 = cfg["lookback_weeks"]
+    lb2 = cfg.get("lookback_weeks_2", 1)
+    trailing = cfg["trailing_pct"]
+
+    usd_s = get_price_series("USD000UTSTOM", "moex")
+    rugbi_s = get_price_series("RGBITR", "moex")
+
+    usd_ret_4m = momentum_return(usd_s, lb1 * 4)  # 4-недельный в 4 раза = 4 месяца
+    usd_ret_1m = momentum_return(usd_s, lb2 * 4)  # 1-месячный
+    rugbi_ret_4m = momentum_return(rugbi_s, lb1 * 4)
+    rugbi_ret_1m = momentum_return(rugbi_s, lb2 * 4)
+
+    # Двойной сигнал: оба периода должны согласовываться
+    signal_4m = "MAIN" if usd_ret_4m >= rugbi_ret_4m else "ALT"
+    signal_1m = "MAIN" if usd_ret_1m >= rugbi_ret_1m else "ALT"
+
+    # Основной сигнал: если хотя бы один говорит MAIN — в USD
+    # Выход только если ОБА говорят ALT (консервативно)
+    if signal_4m == "MAIN" or signal_1m == "MAIN":
+        base_signal = "MAIN"
+    else:
+        base_signal = "ALT"
+
+    # Недельное окно на выход: проверяем не менялся ли сигнал на прошлой неделе
+    prev_signal = state.get(f"{key}_prev_signal", base_signal)
+    weekly_exit = False
+    if base_signal == "ALT" and prev_signal == "MAIN":
+        # Сигнал на выход: держим ещё одну неделю для подтверждения
+        if not state.get(f"{key}_exit_confirmed"):
+            state[f"{key}_exit_confirmed"] = True
+            base_signal = "MAIN"  # держим позицию ещё неделю
+            weekly_exit = True
+            log.info("USDRUB: сигнал выхода, ждём подтверждения следующую неделю")
+        else:
+            state[f"{key}_exit_confirmed"] = False
+    else:
+        state[f"{key}_exit_confirmed"] = False
+
+    # Trailing stop
+    trailing_exit = False
+    if base_signal == "MAIN":
+        peak = state.get(f"{key}_peak", float(usd_s.iloc[-1]))
+        current = float(usd_s.iloc[-1])
+        if current > peak:
+            state[f"{key}_peak"] = current
+        elif current < peak * (1 - trailing / 100):
+            base_signal = "ALT"
+            trailing_exit = True
+            state[f"{key}_peak"] = 0
+            log.info(f"USDRUB: trailing stop! current={current:.2f}, peak={peak:.2f}")
+    else:
+        state[f"{key}_peak"] = float(usd_s.iloc[-1]) if len(usd_s) > 0 else 0
+
+    state[f"{key}_prev_signal"] = base_signal
+
+    return {
+        "signal": base_signal,
+        "usd_ret_4m": round(usd_ret_4m, 2),
+        "usd_ret_1m": round(usd_ret_1m, 2),
+        "rugbi_ret_4m": round(rugbi_ret_4m, 2),
+        "rugbi_ret_1m": round(rugbi_ret_1m, 2),
+        "signal_4m": signal_4m,
+        "signal_1m": signal_1m,
+        "weekly_exit_window": weekly_exit,
+        "trailing_exit": trailing_exit,
+        "usd_price": round(float(usd_s.iloc[-1]), 2) if len(usd_s) > 0 else 0,
+    }
+
+# ─────────────────────────────────────────────────────────────
+# СОСТОЯНИЕ (персист в JSON)
+# ─────────────────────────────────────────────────────────────
+
+def load_state() -> dict:
+    if Path(STATE_FILE).exists():
+        with open(STATE_FILE) as f:
+            return json.load(f)
+    return {}
+
+
+def save_state(state: dict):
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f, indent=2, ensure_ascii=False, default=str)
+
+# ─────────────────────────────────────────────────────────────
+# ФОРМИРОВАНИЕ СООБЩЕНИЙ
+# ─────────────────────────────────────────────────────────────
+
+def emoji_signal(signal: str) -> str:
+    return "🟢" if signal == "MAIN" else "🔴"
+
+
+def format_weekly_report(results: dict) -> str:
+    now = datetime.now().strftime("%d.%m.%Y %H:%M")
+    lines = [f"📊 *Еженедельные сигналы* — {now}\n"]
+
+    # SPY
+    r = results.get("SPY", {})
+    sig = r.get("signal", "?")
+    lines.append(f"{emoji_signal(sig)} *SPY* (S\\&P 500 vs UUP/IEF)")
+    lines.append(f"   Позиция: *{'SPY' if sig == 'MAIN' else 'КЭSH'}*")
+    lines.append(f"   SPY 4нед: {r.get('main_ret', 0):+.1f}%")
+    lines.append(f"   UUP/IEF: {r.get('alt_returns', {})}")
+    lines.append(f"   IMOEX 2м тренд: {r.get('prev_2m_ret', 0):+.1f}%")
+    if r.get("asym_triggered"):
+        lines.append("   ⚡ _ASYMM LOOKBACK сработал — ранний вход_")
+    lines.append("")
+
+    # GLD
+    r = results.get("GLD", {})
+    sig = r.get("signal", "?")
+    lines.append(f"{emoji_signal(sig)} *GLD* (Золото vs YCS)")
+    lines.append(f"   Позиция: *{'GLD' if sig == 'MAIN' else 'КЭSH (YCS)'}")
+    lines.append(f"   GLD 4нед: {r.get('main_ret', 0):+.1f}%")
+    if r.get("asym_triggered"):
+        lines.append("   ⚡ _ASYMM LOOKBACK сработал_")
+    lines.append("")
+
+    # IMOEX
+    r = results.get("IMOEX", {})
+    sig = r.get("signal", "?")
+    lines.append(f"{emoji_signal(sig)} *IMOEX* (IMOEX vs RUGBI)")
+    lines.append(f"   Позиция: *{'IMOEX' if sig == 'MAIN' else 'RUGBI'}*")
+    lines.append(f"   IMOEX 4нед: {r.get('imoex_ret', 0):+.1f}%")
+    lines.append(f"   RUGBI 4нед: {r.get('rugbi_ret', 0):+.1f}%")
+    lines.append(f"   IMOEX 2м тренд: {r.get('prev_2m_ret', 0):+.1f}%")
+    if r.get("asym_triggered"):
+        lines.append("   ⚡ _ASYMM LOOKBACK сработал_")
+    if r.get("trailing_exit"):
+        lines.append("   🛑 _Trailing stop 3% — выход из IMOEX_")
+    lines.append("")
+
+    # USDRUB
+    r = results.get("USDRUB", {})
+    sig = r.get("signal", "?")
+    lines.append(f"{emoji_signal(sig)} *USDRUB* (USD vs RUGBI)")
+    lines.append(f"   Позиция: *{'USD' if sig == 'MAIN' else 'RUGBI'}*")
+    lines.append(f"   USD/RUB: {r.get('usd_price', 0):.2f}")
+    lines.append(f"   USD 4м: {r.get('usd_ret_4m', 0):+.1f}% | 1м: {r.get('usd_ret_1m', 0):+.1f}%")
+    lines.append(f"   RUGBI 4м: {r.get('rugbi_ret_4m', 0):+.1f}% | 1м: {r.get('rugbi_ret_1m', 0):+.1f}%")
+    lines.append(f"   Сигнал 4М: {r.get('signal_4m', '?')} | 1М: {r.get('signal_1m', '?')}")
+    if r.get("weekly_exit_window"):
+        lines.append("   ⏳ _Сигнал выхода — ожидаем подтверждения (нед. окно)_")
+    if r.get("trailing_exit"):
+        lines.append("   🛑 _Trailing stop 5% — выход из USD_")
+
+    lines.append("\n_Сигналы носят информационный характер. Не является инвестиционной рекомендацией._")
+    return "\n".join(lines)
+
+
+def format_change_alert(strategy: str, old_signal: str, new_signal: str, result: dict) -> str:
+    direction = "📈 ВХОД" if new_signal == "MAIN" else "📉 ВЫХОД"
+    names = {
+        "SPY": ("SPY", "КЭSH"),
+        "GLD": ("GLD", "КЭSH (YCS)"),
+        "IMOEX": ("IMOEX", "RUGBI"),
+        "USDRUB": ("USD", "RUGBI"),
+    }
+    main_name, alt_name = names.get(strategy, ("MAIN", "ALT"))
+    asset = main_name if new_signal == "MAIN" else alt_name
+    return (
+        f"🚨 *СМЕНА СИГНАЛА — {strategy}*\n"
+        f"{direction} → *{asset}*\n"
+        f"Предыдущий: {old_signal} → Новый: {new_signal}\n"
+        f"Время: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+    )
+
+# ─────────────────────────────────────────────────────────────
+# ОСНОВНАЯ ЛОГИКА: РАСЧЁТ И ОТПРАВКА
+# ─────────────────────────────────────────────────────────────
+
+def run_all_signals(bot: Bot = None, send_alert_on_change: bool = True) -> dict:
+    """Считает сигналы по всем стратегиям, обновляет state, шлёт алерты."""
+    state = load_state()
+    results = {}
+
+    # SPY
+    try:
+        results["SPY"] = compute_signal_spy_gld(STRATEGIES["SPY"], state)
+    except Exception as e:
+        log.error(f"SPY signal error: {e}")
+        results["SPY"] = {"signal": "ERROR", "error": str(e)}
+
+    # GLD
+    try:
+        results["GLD"] = compute_signal_spy_gld(STRATEGIES["GLD"], state)
+    except Exception as e:
+        log.error(f"GLD signal error: {e}")
+        results["GLD"] = {"signal": "ERROR", "error": str(e)}
+
+    # IMOEX
+    try:
+        results["IMOEX"] = compute_signal_imoex(STRATEGIES["IMOEX"], state)
+    except Exception as e:
+        log.error(f"IMOEX signal error: {e}")
+        results["IMOEX"] = {"signal": "ERROR", "error": str(e)}
+
+    # USDRUB
+    try:
+        results["USDRUB"] = compute_signal_usdrub(STRATEGIES["USDRUB"], state)
+    except Exception as e:
+        log.error(f"USDRUB signal error: {e}")
+        results["USDRUB"] = {"signal": "ERROR", "error": str(e)}
+
+    # Проверяем смену сигналов и шлём алерты
+    if bot and send_alert_on_change:
+        for strat, res in results.items():
+            new_sig = res.get("signal", "?")
+            old_sig = state.get(f"{strat}_last_signal", new_sig)
+            if new_sig != old_sig and new_sig not in ("ERROR", "?"):
+                alert = format_change_alert(strat, old_sig, new_sig, res)
+                try:
+                    bot.send_message(chat_id=CHAT_ID, text=alert, parse_mode="Markdown")
+                except Exception as e:
+                    log.error(f"Alert send error: {e}")
+
+    # Сохраняем текущие сигналы в state
+    for strat, res in results.items():
+        if res.get("signal") not in ("ERROR", "?"):
+            state[f"{strat}_last_signal"] = res["signal"]
+    state["last_run"] = datetime.now().isoformat()
+    save_state(state)
+
+    return results
+
+
+def send_weekly_report(bot: Bot):
+    """Полный еженедельный отчёт."""
+    log.info("Запуск еженедельного расчёта сигналов...")
+    results = run_all_signals(bot, send_alert_on_change=True)
+    report = format_weekly_report(results)
+    try:
+        bot.send_message(chat_id=CHAT_ID, text=report, parse_mode="Markdown")
+        log.info("Еженедельный отчёт отправлен")
+    except Exception as e:
+        log.error(f"Report send error: {e}")
+
+# ─────────────────────────────────────────────────────────────
+# TELEGRAM КОМАНДЫ
+# ─────────────────────────────────────────────────────────────
+
+async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "👋 Бот стратегических сигналов запущен!\n\n"
+        "Команды:\n"
+        "/signal — текущие сигналы по всем стратегиям\n"
+        "/status — статус последнего расчёта\n"
+        "/history — история сигналов\n"
+        "/help — помощь\n\n"
+        "Автоматический отчёт: каждую пятницу в 21:00 МСК"
+    )
+
+
+async def cmd_signal(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("⏳ Считаю сигналы, подождите 30–60 сек...")
+    bot = ctx.bot
+    results = run_all_signals(bot, send_alert_on_change=False)
+    report = format_weekly_report(results)
+    await update.message.reply_text(report, parse_mode="Markdown")
+
+
+async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    state = load_state()
+    last_run = state.get("last_run", "никогда")
+    lines = [f"*Статус бота*\n", f"Последний расчёт: {last_run}\n"]
+    for strat in ["SPY", "GLD", "IMOEX", "USDRUB"]:
+        sig = state.get(f"{strat}_last_signal", "—")
+        e = emoji_signal(sig) if sig in ("MAIN", "ALT") else "❓"
+        lines.append(f"{e} {strat}: {sig}")
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def cmd_history(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    state = load_state()
+    history = state.get("signal_history", [])
+    if not history:
+        await update.message.reply_text("История пуста")
+        return
+    lines = ["*История смен сигналов:*\n"]
+    for h in history[-20:]:
+        lines.append(f"`{h['date']}` {h['strategy']}: {h['from']} → {h['to']}")
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    text = (
+        "*Стратегии:*\n"
+        "🔹 *SPY* — S\\&P 500 vs UUP/IEF → кэш. "
+        "Asymm lookback: если рынок упал >8% за 2 мес и начал расти — ранний вход.\n\n"
+        "🔹 *GLD* — Золото vs YCS → кэш. "
+        "Та же логика. YCS прибыльный актив, поэтому в кэше теряем — важно точно входить.\n\n"
+        "🔹 *IMOEX* — IMOEX vs RUGBI → кэш. "
+        "Asymm lookback + trailing stop 3% на override-позиции.\n\n"
+        "🔹 *USDRUB* — USD vs RUGBI. "
+        "Двойной сигнал 4М+1М. Выход только при подтверждении (недельное окно). "
+        "Trailing stop 5%.\n\n"
+        "*Источники данных:*\n"
+        "Yahoo Finance: SPY, GLD, UUP, IEF, YCS\n"
+        "MOEX ISS API: IMOEX, RGBITR, USDRUB\n\n"
+        "_Не является инвестиционной рекомендацией._"
+    )
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+# ─────────────────────────────────────────────────────────────
+# ПЛАНИРОВЩИК
+# ─────────────────────────────────────────────────────────────
+
+def scheduler_thread(bot: Bot):
+    """Планировщик: пятница 21:00 МСК."""
+    schedule.every().friday.at("18:00").do(send_weekly_report, bot=bot)  # 18:00 UTC = 21:00 МСК
+    log.info("Планировщик запущен: отчёт каждую пятницу в 21:00 МСК")
+    while True:
+        schedule.run_pending()
+        time.sleep(60)
+
+# ─────────────────────────────────────────────────────────────
+# MAIN
+# ─────────────────────────────────────────────────────────────
+
+def main():
+    if TELEGRAM_TOKEN == "ВАШ_ТОКЕН_БОТА":
+        print("⚠️  Укажите TELEGRAM_TOKEN и CHAT_ID в файле перед запуском!")
+        return
+
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    bot = Bot(token=TELEGRAM_TOKEN)
+
+    app.add_handler(CommandHandler("start",   cmd_start))
+    app.add_handler(CommandHandler("signal",  cmd_signal))
+    app.add_handler(CommandHandler("status",  cmd_status))
+    app.add_handler(CommandHandler("history", cmd_history))
+    app.add_handler(CommandHandler("help",    cmd_help))
+
+    # Запускаем планировщик в фоне
+    t = threading.Thread(target=scheduler_thread, args=(bot,), daemon=True)
+    t.start()
+
+    log.info("Бот запущен. Ожидание команд...")
+    app.run_polling()
+
+
+if __name__ == "__main__":
+    main()
