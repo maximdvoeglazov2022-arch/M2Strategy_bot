@@ -28,6 +28,7 @@ import pandas as pd
 import schedule
 import time
 import threading
+import asyncio
 from datetime import datetime, timedelta, date
 from pathlib import Path
 from telegram import Update, Bot
@@ -549,8 +550,11 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_signal(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⏳ Считаю сигналы, подождите 30–60 сек...")
+    loop = asyncio.get_event_loop()
     bot = ctx.bot
-    results = run_all_signals(bot, send_alert_on_change=False)
+    results = await loop.run_in_executor(
+        None, lambda: run_all_signals(bot, send_alert_on_change=False)
+    )
     report = format_weekly_report(results)
     await update.message.reply_text(report, parse_mode="Markdown")
 
