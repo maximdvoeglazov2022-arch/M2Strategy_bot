@@ -1,5 +1,6 @@
-import os, logging, requests, asyncio
+import os, logging, requests, asyncio, json
 from datetime import datetime, timedelta
+from pathlib import Path
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
@@ -8,6 +9,17 @@ log = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 CHAT_ID = os.environ.get("CHAT_ID", "")
+STATE_FILE = "state.json"
+
+def load_state():
+    if Path(STATE_FILE).exists():
+        with open(STATE_FILE) as f:
+            return json.load(f)
+    return {}
+
+def save_state(state):
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f)
 
 def get_moex(ticker):
     start = (datetime.today() - timedelta(weeks=12)).strftime('%Y-%m-%d')
@@ -63,33 +75,73 @@ def calc_signals():
     rs4 = mom(spy, 4)
     rg4 = mom(gld, 4)
 
-    si  = "IMOEX" if ri4 >= rr4 else "RUGBI"
-    su  = "USD"   if (ru4 >= rr4 or ru1 >= rr1) else "RUGBI"
-    ss  = "SPY"   if rs4 > 0 else "CASH"
-    sg  = "GLD"   if rg4 > 0 else "CASH"
+    si = "IMOEX" if ri4 >= rr4 else "CASH"
+    su = "USD"   if (ru4 >= rr4 or ru1 >= rr1) else "CASH"
+    ss = "SPY"   if rs4 > 0 else "CASH"
+    sg = "GLD"   if rg4 > 0 else "CASH"
 
     return {
         "si": si, "su": su, "ss": ss, "sg": sg,
-        "up": usd[-1] if usd else 0,
-        "sp": spy[-1] if spy else 0,
-        "gp": gld[-1] if gld else 0,
+        "up": usd[-1]   if usd   else 0,
+        "ip": imoex[-1] if imoex else 0,
+        "sp": spy[-1]   if spy   else 0,
+        "gp": gld[-1]   if gld   else 0,
     }
 
-def make_report(s):
-    ei = "🟢 ПОЗИЦИЯ ОТКРЫТА" if s["si"]=="IMOEX" else "⚪ ВНЕ ПОЗИЦИИ"
-    eu = "🟢 ПОЗИЦИЯ ОТКРЫТА" if s["su"]=="USD"   else "⚪ ВНЕ ПОЗИЦИИ"
-    es = "🟢 ПОЗИЦИЯ ОТКРЫТА" if s["ss"]=="SPY"   else "⚪ ВНЕ ПОЗИЦИИ"
-    eg = "🟢 ПОЗИЦИЯ ОТКРЫТА" if s["sg"]=="GLD"   else "⚪ ВНЕ ПОЗИЦИИ"
-    t  = datetime.now().strftime("%d.%m.%Y %H:%M")
+def pnl_str(current, entry, currency=""):
+    if not entry or not current:
+        return ""
+    pct = (current/entry - 1)*100
+    sign = "+" if pct >= 0 else ""
+    return f"  Вход: {currency}{entry:.2f} | P&L: {sign}{pct:.1f}%"
+
+def update_entries(s, state):
+    now = datetime.now().strftime("%d.%m.%Y")
+    for key, sig, price_key, label in [
+        ("IMOEX", s["si"], "ip", "IMOEX"),
+        ("USD",   s["su"], "up", "USD"),
+        ("SPY",   s["ss"], "sp", "SPY"),
+        ("GLD",   s["sg"], "gp", "GLD"),
+    ]:
+        prev = state.get(f"{key}_sig", "CASH")
+        curr = sig
+        if curr != "CASH" and prev == "CASH":
+            state[f"{key}_entry"] = s[price_key]
+            state[f"{key}_entry_date"] = now
+            log.info(f"Новая позиция {key} по цене {s[price_key]}")
+        if curr == "CASH":
+            state.pop(f"{key}_entry", None)
+            state.pop(f"{key}_entry_date", None)
+        state[f"{key}_sig"] = curr
+    save_state(state)
+
+def make_report(s, state):
+    t = datetime.now().strftime("%d.%m.%Y %H:%M")
+
+    def block(name, sig, price, currency, key):
+        if sig != "CASH":
+            entry = state.get(f"{key}_entry")
+            entry_date = state.get(f"{key}_entry_date", "")
+            pl = pnl_str(price, entry, currency)
+            date_str = f"  Дата входа: {entry_date}\n" if entry_date else ""
+            return f"🟢 ПОЗИЦИЯ ОТКРЫТА\n{date_str}{pl}"
+        return "⚪ ВНЕ ПОЗИЦИИ"
+
+    bi = block("IMOEX", s["si"], s["ip"], "",  "IMOEX")
+    bu = block("USD",   s["su"], s["up"], "",  "USD")
+    bs = block("SPY",   s["ss"], s["sp"], "$", "SPY")
+    bg = block("GLD",   s["sg"], s["gp"], "$", "GLD")
+
     return (
         f"📊 Сигналы — {t}\n\n"
-        f"🇷🇺 IMOEX\n{ei}\n\n"
-        f"💵 USDRUB\n{eu}\n"
-        f"USD/RUB: {s['up']:.2f}\n\n"
-        f"🇺🇸 SPY (S&P 500)\n{es}\n"
-        f"SPY: ${s['sp']:.2f}\n\n"
-        f"🥇 GLD (Золото)\n{eg}\n"
-        f"GLD: ${s['gp']:.2f}"
+        f"🇷🇺 IMOEX\n{bi}\n"
+        f"  Текущий: {s['ip']:.0f}\n\n"
+        f"💵 USDRUB\n{bu}\n"
+        f"  USD/RUB: {s['up']:.2f}\n\n"
+        f"🇺🇸 SPY (S&P 500)\n{bs}\n"
+        f"  SPY: ${s['sp']:.2f}\n\n"
+        f"🥇 GLD (Золото)\n{bg}\n"
+        f"  GLD: ${s['gp']:.2f}"
     )
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -99,8 +151,10 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_signal(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Считаю... (~30 сек)")
     try:
+        state = load_state()
         s = await asyncio.get_event_loop().run_in_executor(None, calc_signals)
-        await update.message.reply_text(make_report(s))
+        update_entries(s, state)
+        await update.message.reply_text(make_report(s, state))
     except Exception as e:
         log.error(e)
         await update.message.reply_text(f"Ошибка: {e}")
