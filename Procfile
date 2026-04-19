@@ -1,1 +1,1 @@
-python strategy_bot.py 
+web: python strategy_bot.py 
