@@ -615,11 +615,10 @@ def scheduler_thread(bot: Bot):
 
 def main():
     if TELEGRAM_TOKEN == "ВАШ_ТОКЕН_БОТА":
-        print("⚠️  Укажите TELEGRAM_TOKEN и CHAT_ID в файле перед запуском!")
+        print("Укажите TELEGRAM_TOKEN и CHAT_ID!")
         return
 
     app = Application.builder().token(TELEGRAM_TOKEN).build()
-    bot = Bot(token=TELEGRAM_TOKEN)
 
     app.add_handler(CommandHandler("start",   cmd_start))
     app.add_handler(CommandHandler("signal",  cmd_signal))
@@ -627,12 +626,12 @@ def main():
     app.add_handler(CommandHandler("history", cmd_history))
     app.add_handler(CommandHandler("help",    cmd_help))
 
-    # Запускаем планировщик в фоне
+    bot = app.bot
     t = threading.Thread(target=scheduler_thread, args=(bot,), daemon=True)
     t.start()
 
     log.info("Бот запущен. Ожидание команд...")
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
