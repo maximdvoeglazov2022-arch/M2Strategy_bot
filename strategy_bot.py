@@ -47,7 +47,6 @@ def get_moex_today(ticker):
         rows = data["marketdata"]["data"]
         for r in rows:
             if r[0] == ticker:
-                # CURRENTVALUE — живая цена, LASTVALUE — последнее закрытие
                 val = r[1] if r[1] else r[2]
                 return float(val) if val else None
         return None
@@ -169,18 +168,33 @@ def calc_all():
     state["GLD_cash_w"] = 0 if sig_gld=="GLD" else state.get("GLD_cash_w",0)+1
 
     # ── IMOEX: 4нед vs RUGBI + asymm LB + trailing 3% ──
+    # Шаг 1: базовый сигнал — IMOEX опережает RUGBI за 4 недели
     sig_imoex = "IMOEX" if (len(pi)>4 and len(pr)>4 and ret(pi,4)>=ret(pr,4)) else "CASH"
-    if state.get("IMOEX_override") and sig_imoex=="IMOEX":
-        peak = state.get("IMOEX_peak", imoex_now)
-        if imoex_now > peak: state["IMOEX_peak"] = imoex_now
-        elif imoex_now < peak*0.97:
-            sig_imoex = "CASH"; state["IMOEX_override"] = False
-    if sig_imoex=="CASH" and len(pi)>8 and len(pr)>4:
+
+    # Шаг 2: asymm lookback — только если в кэше ≥4 недель подряд
+    if sig_imoex == "CASH" and len(pi) > 8 and len(pr) > 4:
         cash_w = state.get("IMOEX_cash_w", 0)
-        if ret(pi,8)<=-8.0 and cash_w>=4 and ret(pi,1)>0:
+        if ret(pi,8) <= -8.0 and cash_w >= 4 and ret(pi,1) > 0:
             sig_imoex = "IMOEX"
             state["IMOEX_override"] = True
             state["IMOEX_peak"] = imoex_now
+
+    # Шаг 3: trailing stop 3% — применяется к ЛЮБОЙ открытой позиции IMOEX
+    if sig_imoex == "IMOEX":
+        peak = state.get("IMOEX_peak", imoex_now)
+        if imoex_now > peak:
+            state["IMOEX_peak"] = imoex_now  # обновляем пик вверх
+        elif imoex_now < peak * 0.97:
+            sig_imoex = "CASH"               # трейлинг стоп сработал
+            state["IMOEX_override"] = False
+            state["IMOEX_peak"] = 0
+        else:
+            state["IMOEX_peak"] = peak       # держим пик
+    else:
+        # Вне позиции — сбрасываем пик и override
+        state["IMOEX_override"] = False
+        state["IMOEX_peak"] = 0
+
     state["IMOEX_cash_w"] = 0 if sig_imoex=="IMOEX" else state.get("IMOEX_cash_w",0)+1
 
     # ── USDRUB: двойной 4нед+1нед + окно выхода + trailing 5% ──
@@ -278,6 +292,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "👋 Бот стратегических сигналов\n\n"
         "/signal — текущие позиции и P&L\n"
         "/setentry АКТИВ ЦЕНА ДАТА — ввод вручную\n"
+        "/resetimoex — сбросить позицию IMOEX\n"
         "/help — о стратегиях")
 
 async def cmd_signal(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -315,6 +330,20 @@ async def cmd_setentry(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"Ошибка: {e}")
 
+async def cmd_resetimoex(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Сброс позиции IMOEX — используй если бот показывает неверный сигнал."""
+    state = load_state()
+    state.pop("IMOEX_sig",        None)
+    state.pop("IMOEX_entry",      None)
+    state.pop("IMOEX_entry_date", None)
+    state["IMOEX_override"] = False
+    state["IMOEX_peak"]     = 0
+    state["IMOEX_cash_w"]   = 0
+    save_state(state)
+    await update.message.reply_text(
+        "✅ IMOEX сброшен → ВНЕ ПОЗИЦИИ\n"
+        "Нажми /signal чтобы пересчитать сигнал с нуля.")
+
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📋 О стратегиях\n\n"
@@ -342,10 +371,11 @@ async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(CommandHandler("start",    cmd_start))
-    app.add_handler(CommandHandler("signal",   cmd_signal))
-    app.add_handler(CommandHandler("setentry", cmd_setentry))
-    app.add_handler(CommandHandler("help",     cmd_help))
+    app.add_handler(CommandHandler("start",      cmd_start))
+    app.add_handler(CommandHandler("signal",     cmd_signal))
+    app.add_handler(CommandHandler("setentry",   cmd_setentry))
+    app.add_handler(CommandHandler("resetimoex", cmd_resetimoex))
+    app.add_handler(CommandHandler("help",       cmd_help))
     log.info("Бот запущен")
     app.run_polling(drop_pending_updates=True)
 
