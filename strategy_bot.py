@@ -14,25 +14,79 @@ STATE_FILE     = "state.json"
 # ── STATE ─────────────────────────────────────────────────────────────────────
 def load_state():
     if Path(STATE_FILE).exists():
-        with open(STATE_FILE) as f:
-            return json.load(f)
+        try:
+            with open(STATE_FILE) as f:
+                return json.load(f)
+        except:
+            pass
     return {}
 
 def save_state(s):
     with open(STATE_FILE, "w") as f:
         json.dump(s, f, ensure_ascii=False, indent=2)
 
-# ── MOEX ISS API ──────────────────────────────────────────────────────────────
-def get_moex_weekly(ticker, weeks=28):
+# ── DATA FETCHERS ──────────────────────────────────────────────────────────────
+
+def get_index_weekly(ticker, weeks=28):
+    """
+    IMOEX и RGBITR — через candles endpoint.
+    /history/boards/SNDX возвращает CLOSE=0 на большинстве дней,
+    /candles даёт корректные дневные значения индекса.
+    """
+    end_dt   = datetime.today()
+    start_dt = end_dt - timedelta(weeks=weeks)
+    start    = start_dt.strftime('%Y-%m-%d')
+    end      = end_dt.strftime('%Y-%m-%d')
+    url = (f"https://iss.moex.com/iss/engines/stock/markets/index/"
+           f"securities/{ticker}/candles.json"
+           f"?interval=24&from={start}&till={end}&iss.meta=off")
+    try:
+        data    = requests.get(url, timeout=12).json()
+        candles = data.get("candles", {})
+        columns = candles.get("columns", [])
+        rows    = candles.get("data", [])
+        if not rows:
+            raise ValueError("Нет данных")
+        ci = columns.index("close")
+        bi = columns.index("begin")
+        w  = {}
+        for row in rows:
+            d = str(row[bi])[:10]   # "2026-01-05 00:00:00" → "2026-01-05"
+            c = row[ci]
+            if c:
+                wk = datetime.strptime(d, "%Y-%m-%d").strftime("%Y-W%W")
+                w[wk] = (d, float(c))
+        result = [(w[k][0], w[k][1]) for k in sorted(w)]
+        log.info(f"Candles {ticker}: {len(result)} нед. точек, "
+                 f"последняя {result[-1][0]}={result[-1][1]:.2f}")
+        return result
+    except Exception as e:
+        log.error(f"Candles {ticker}: {e}")
+        return []
+
+def get_index_today(ticker):
+    """Текущее значение индекса (IMOEX, RGBITR)."""
+    url = (f"https://iss.moex.com/iss/engines/stock/markets/index/"
+           f"boards/SNDX/securities/{ticker}.json"
+           f"?iss.meta=off&iss.only=marketdata"
+           f"&marketdata.columns=SECID,CURRENTVALUE,LASTVALUE")
+    try:
+        rows = requests.get(url, timeout=10).json()["marketdata"]["data"]
+        for r in rows:
+            if r[0] == ticker:
+                val = r[1] if r[1] else r[2]
+                return float(val) if val else None
+    except Exception as e:
+        log.error(f"Index today {ticker}: {e}")
+    return None
+
+def get_usd_weekly(weeks=28):
+    """USD/RUB через history/currency с limit=500."""
     start = (datetime.today() - timedelta(weeks=weeks)).strftime('%Y-%m-%d')
-    if ticker == "USD000UTSTOM":
-        url = (f"https://iss.moex.com/iss/history/engines/currency/markets/selt/"
-               f"boards/CETS/securities/{ticker}.json"
-               f"?from={start}&iss.meta=off&history.columns=TRADEDATE,CLOSE")
-    else:
-        url = (f"https://iss.moex.com/iss/history/engines/stock/markets/index/"
-               f"boards/SNDX/securities/{ticker}.json"
-               f"?from={start}&iss.meta=off&history.columns=TRADEDATE,CLOSE")
+    url = (f"https://iss.moex.com/iss/history/engines/currency/markets/selt/"
+           f"boards/CETS/securities/USD000UTSTOM.json"
+           f"?from={start}&iss.meta=off"
+           f"&history.columns=TRADEDATE,CLOSE&limit=500&start=0")
     try:
         rows = requests.get(url, timeout=12).json()["history"]["data"]
         w = {}
@@ -41,81 +95,65 @@ def get_moex_weekly(ticker, weeks=28):
                 wk = datetime.strptime(d, "%Y-%m-%d").strftime("%Y-W%W")
                 w[wk] = (d, float(c))
         result = [(w[k][0], w[k][1]) for k in sorted(w)]
-        log.info(f"MOEX {ticker}: {len(result)} недельных точек, последняя {result[-1] if result else 'нет'}")
+        log.info(f"USD weekly: {len(result)} нед. точек")
         return result
     except Exception as e:
-        log.error(f"MOEX {ticker} ошибка: {e}")
+        log.error(f"USD weekly: {e}")
         return []
 
-def get_moex_today(ticker):
-    if ticker == "USD000UTSTOM":
-        url = (f"https://iss.moex.com/iss/engines/currency/markets/selt/"
-               f"boards/CETS/securities/{ticker}.json"
-               f"?iss.meta=off&marketdata.columns=SECID,LAST")
-        key_field = "LAST"
-    else:
-        url = (f"https://iss.moex.com/iss/engines/stock/markets/index/"
-               f"boards/SNDX/securities/{ticker}.json"
-               f"?iss.meta=off&iss.only=marketdata"
-               f"&marketdata.columns=SECID,CURRENTVALUE,LASTVALUE")
-        key_field = "CURRENTVALUE"
+def get_usd_today():
+    url = (f"https://iss.moex.com/iss/engines/currency/markets/selt/"
+           f"boards/CETS/securities/USD000UTSTOM.json"
+           f"?iss.meta=off&marketdata.columns=SECID,LAST")
     try:
-        data = requests.get(url, timeout=10).json()
-        rows = data["marketdata"]["data"]
+        rows = requests.get(url, timeout=10).json()["marketdata"]["data"]
         for r in rows:
-            if r[0] == ticker:
-                val = r[1] if r[1] else (r[2] if len(r) > 2 else None)
-                return float(val) if val else None
-        return None
-    except Exception as e:
-        log.error(f"MOEX today {ticker}: {e}")
-        return None
-
-# ── YAHOO FINANCE ─────────────────────────────────────────────────────────────
-YAHOO_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "Accept": "application/json",
-}
+            if r[0] == "USD000UTSTOM" and r[1]:
+                return float(r[1])
+    except:
+        pass
+    return None
 
 def get_yahoo_weekly(ticker, weeks=28):
+    """SPY / GLD — пробуем оба Yahoo-эндпоинта."""
     end   = datetime.today()
-    start = end - timedelta(weeks=weeks + 2)
-    # Пробуем v8 API
-    for base in [
-        f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}",
-        f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}",
-    ]:
-        url = (f"{base}?interval=1wk"
-               f"&period1={int(start.timestamp())}"
+    start = end - timedelta(weeks=weeks)
+    hdrs  = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+             "AppleWebKit/537.36 (KHTML, like Gecko) "
+             "Chrome/120.0.0.0 Safari/537.36"}
+    for base in ["https://query1.finance.yahoo.com",
+                 "https://query2.finance.yahoo.com"]:
+        url = (f"{base}/v8/finance/chart/{ticker}"
+               f"?interval=1wk&period1={int(start.timestamp())}"
                f"&period2={int(end.timestamp())}")
         try:
-            resp = requests.get(url, headers=YAHOO_HEADERS, timeout=15)
-            data = resp.json()
+            data = requests.get(url, headers=hdrs, timeout=15).json()
             r    = data["chart"]["result"][0]
             ts   = r["timestamp"]
             cls  = r["indicators"]["quote"][0]["close"]
-            result = [(datetime.fromtimestamp(t).strftime("%Y-%m-%d"), c)
-                      for t, c in zip(ts, cls) if c is not None]
-            if result:
-                log.info(f"Yahoo {ticker}: {len(result)} точек, последняя {result[-1]}")
-                return result
+            res  = [(datetime.fromtimestamp(t).strftime("%Y-%m-%d"), float(c))
+                    for t, c in zip(ts, cls) if c is not None]
+            if len(res) > 5:
+                log.info(f"Yahoo {ticker}: {len(res)} нед. точек")
+                return res
         except Exception as e:
-            log.warning(f"Yahoo {ticker} ({base}): {e}")
-    log.error(f"Yahoo {ticker}: все попытки неуспешны")
+            log.warning(f"Yahoo {base} {ticker}: {e}")
+    log.error(f"Yahoo {ticker}: все попытки неудачны")
     return []
 
 def get_yahoo_today(ticker):
-    for base in [
-        f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}",
-        f"https://query2.finance.yahoo.com/v8/finance/chart/{ticker}",
-    ]:
+    hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"}
+    for base in ["https://query1.finance.yahoo.com",
+                 "https://query2.finance.yahoo.com"]:
         try:
-            url  = f"{base}?interval=1d&range=5d"
-            data = requests.get(url, headers=YAHOO_HEADERS, timeout=15).json()
+            url  = f"{base}/v8/finance/chart/{ticker}?interval=1d&range=5d"
+            data = requests.get(url, headers=hdrs, timeout=15).json()
             cls  = data["chart"]["result"][0]["indicators"]["quote"][0]["close"]
             vals = [x for x in cls if x is not None]
             if vals:
-                return vals[-1]
+                return float(vals[-1])
         except:
             pass
     return None
@@ -125,19 +163,16 @@ def P(data): return [x[1] for x in data]
 def D(data): return [x[0] for x in data]
 
 def ret(p, n):
-    """Доходность за последние n недель в %"""
     if len(p) < n + 1:
         return 0.0
     return (p[-1] / p[-n-1] - 1) * 100
 
 def find_entry(data, is_open_fn):
-    """Находим дату и цену последнего входа в позицию"""
     p = P(data); d = D(data)
     if len(p) < 6:
         return None, None
-    prev_open   = False
-    entry_price = None
-    entry_date  = None
+    prev_open = False
+    entry_price = None; entry_date = None
     for i in range(5, len(p)):
         sub      = p[:i+1]
         open_now = is_open_fn(sub)
@@ -151,191 +186,247 @@ def find_entry(data, is_open_fn):
 def calc_all():
     state = load_state()
 
-    # Загрузка данных
     spy_d   = get_yahoo_weekly("SPY")
     gld_d   = get_yahoo_weekly("GLD")
-    imoex_d = get_moex_weekly("IMOEX")
-    rugbi_d = get_moex_weekly("RGBITR")
-    usd_d   = get_moex_weekly("USD000UTSTOM")
+    imoex_d = get_index_weekly("IMOEX")
+    rugbi_d = get_index_weekly("RGBITR")
+    usd_d   = get_usd_weekly()
 
     ps = P(spy_d);   pg = P(gld_d)
     pi = P(imoex_d); pr = P(rugbi_d); pu = P(usd_d)
 
-    # Дневные цены для P&L
-    spy_now   = get_yahoo_today("SPY")   or (ps[-1] if ps else 0)
-    gld_now   = get_yahoo_today("GLD")   or (pg[-1] if pg else 0)
-    imoex_now = get_moex_today("IMOEX") or (pi[-1] if pi else 0)
-    usd_now   = get_moex_today("USD000UTSTOM") or (pu[-1] if pu else 0)
-
-    # Сохраняем momentum-значения для /debug
-    state["_debug"] = {
-        "spy_4w":   round(ret(ps, 4), 2) if len(ps) > 4 else None,
-        "gld_4w":   round(ret(pg, 4), 2) if len(pg) > 4 else None,
-        "imoex_4w": round(ret(pi, 4), 2) if len(pi) > 4 else None,
-        "rugbi_4w": round(ret(pr, 4), 2) if len(pr) > 4 else None,
-        "usd_4w":   round(ret(pu, 4), 2) if len(pu) > 4 else None,
-        "usd_1w":   round(ret(pu, 1), 2) if len(pu) > 1 else None,
-        "imoex_8w": round(ret(pi, 8), 2) if len(pi) > 8 else None,
-        "spy_pts":  len(ps), "gld_pts": len(pg),
-        "imoex_pts":len(pi), "rugbi_pts":len(pr), "usd_pts": len(pu),
-        "spy_now":  round(spy_now, 2),   "gld_now":  round(gld_now, 2),
-        "imoex_now":round(imoex_now, 2), "usd_now":  round(usd_now, 2),
-        "ts": datetime.now().strftime("%d.%m.%Y %H:%M"),
+    data_ok = {
+        "SPY":   len(ps) > 5,
+        "GLD":   len(pg) > 5,
+        "IMOEX": len(pi) > 5,
+        "RUGBI": len(pr) > 5,
+        "USD":   len(pu) > 5,
     }
+    log.info(f"Точек данных: SPY={len(ps)} GLD={len(pg)} "
+             f"IMOEX={len(pi)} RUGBI={len(pr)} USD={len(pu)}")
 
-    # ── SPY: 4нед momentum > 0 → SPY, иначе CASH ──────────────────────────
-    sig_spy = "SPY" if (len(ps) > 4 and ret(ps, 4) > 0) else "CASH"
-    # Asymm lookback: если упал >8% за 8 нед и в кэше ≥4 нед и эта нед >0
-    if sig_spy == "CASH" and len(ps) > 8:
-        cash_w = state.get("SPY_cash_w", 0)
-        if ret(ps, 8) <= -8.0 and cash_w >= 4 and ret(ps, 1) > 0:
-            sig_spy = "SPY"
-    state["SPY_cash_w"] = 0 if sig_spy == "SPY" else state.get("SPY_cash_w", 0) + 1
+    spy_now   = get_yahoo_today("SPY")        or (ps[-1] if ps else None)
+    gld_now   = get_yahoo_today("GLD")        or (pg[-1] if pg else None)
+    imoex_now = get_index_today("IMOEX")      or (pi[-1] if pi else None)
+    usd_now   = get_usd_today()               or (pu[-1] if pu else None)
 
-    # ── GLD: 4нед momentum > 0 → GLD, иначе CASH ──────────────────────────
-    sig_gld = "GLD" if (len(pg) > 4 and ret(pg, 4) > 0) else "CASH"
-    if sig_gld == "CASH" and len(pg) > 8:
-        cash_w = state.get("GLD_cash_w", 0)
-        if ret(pg, 8) <= -8.0 and cash_w >= 4 and ret(pg, 1) > 0:
-            sig_gld = "GLD"
-    state["GLD_cash_w"] = 0 if sig_gld == "GLD" else state.get("GLD_cash_w", 0) + 1
+    debug = {
+        "SPY_4w":   round(ret(ps,4),2) if data_ok["SPY"]   else None,
+        "GLD_4w":   round(ret(pg,4),2) if data_ok["GLD"]   else None,
+        "IMOEX_4w": round(ret(pi,4),2) if data_ok["IMOEX"] else None,
+        "RUGBI_4w": round(ret(pr,4),2) if data_ok["RUGBI"] else None,
+        "USD_4w":   round(ret(pu,4),2) if data_ok["USD"]   else None,
+        "USD_1w":   round(ret(pu,1),2) if data_ok["USD"]   else None,
+        "IMOEX_8w": round(ret(pi,8),2) if data_ok["IMOEX"] else None,
+        "pts":      {"SPY":len(ps),"GLD":len(pg),"IMOEX":len(pi),
+                     "RUGBI":len(pr),"USD":len(pu)},
+    }
+    log.info(f"Моменты: {debug}")
 
-    # ── IMOEX: относительный momentum vs RUGBI + asymm LB + trailing 3% ───
-    # Шаг 1: IMOEX опережает RUGBI за 4 недели
-    sig_imoex = "IMOEX" if (len(pi) > 4 and len(pr) > 4
-                             and ret(pi, 4) >= ret(pr, 4)) else "CASH"
-
-    # Шаг 2: asymm lookback — только если в кэше ≥4 нед подряд
-    if sig_imoex == "CASH" and len(pi) > 8 and len(pr) > 4:
-        cash_w = state.get("IMOEX_cash_w", 0)
-        if ret(pi, 8) <= -8.0 and cash_w >= 4 and ret(pi, 1) > 0:
-            sig_imoex = "IMOEX"
-            state["IMOEX_override"] = True
-            state["IMOEX_peak"]     = imoex_now
-
-    # Шаг 3: trailing stop 3% для ЛЮБОЙ открытой позиции
-    if sig_imoex == "IMOEX":
-        peak = state.get("IMOEX_peak", imoex_now)
-        if imoex_now > peak:
-            state["IMOEX_peak"] = imoex_now
-        elif imoex_now < peak * 0.97:
-            sig_imoex = "CASH"
-            state["IMOEX_override"] = False
-            state["IMOEX_peak"]     = 0
-        else:
-            state["IMOEX_peak"] = peak
+    # ── SPY ───────────────────────────────────────────────────────────────────
+    if not data_ok["SPY"]:
+        sig_spy = state.get("SPY_sig", "CASH")
+        log.warning("SPY: нет данных")
     else:
-        state["IMOEX_override"] = False
-        state["IMOEX_peak"]     = 0
+        sig_spy = "SPY" if ret(ps,4) > 0 else "CASH"
+        if sig_spy == "CASH" and len(ps) > 8:
+            cw = state.get("SPY_cash_w", 0)
+            if ret(ps,8) <= -8.0 and cw >= 4 and ret(ps,1) > 0:
+                sig_spy = "SPY"
+        state["SPY_cash_w"] = 0 if sig_spy == "SPY" \
+                              else state.get("SPY_cash_w", 0) + 1
 
-    state["IMOEX_cash_w"] = (0 if sig_imoex == "IMOEX"
-                              else state.get("IMOEX_cash_w", 0) + 1)
+    # ── GLD ───────────────────────────────────────────────────────────────────
+    if not data_ok["GLD"]:
+        sig_gld = state.get("GLD_sig", "CASH")
+        log.warning("GLD: нет данных")
+    else:
+        sig_gld = "GLD" if ret(pg,4) > 0 else "CASH"
+        if sig_gld == "CASH" and len(pg) > 8:
+            cw = state.get("GLD_cash_w", 0)
+            if ret(pg,8) <= -8.0 and cw >= 4 and ret(pg,1) > 0:
+                sig_gld = "GLD"
+        state["GLD_cash_w"] = 0 if sig_gld == "GLD" \
+                              else state.get("GLD_cash_w", 0) + 1
 
-    # ── USDRUB: двойной сигнал 4нед+1нед + окно выхода + trailing 5% ──────
-    raw_usd = "USD" if (len(pu) > 4 and len(pr) > 4 and
-                        (ret(pu, 4) >= ret(pr, 4) or
-                         ret(pu, 1) >= ret(pr, 1))) else "CASH"
-    prev_usd = state.get("USD_prev", raw_usd)
-    sig_usd  = raw_usd
-    if raw_usd == "CASH" and prev_usd == "USD":
-        if not state.get("USD_exit_pending"):
-            state["USD_exit_pending"] = True
-            sig_usd = "USD"   # держим ещё неделю
+    # ── IMOEX ─────────────────────────────────────────────────────────────────
+    if not data_ok["IMOEX"] or not data_ok["RUGBI"]:
+        sig_imoex = state.get("IMOEX_sig", "CASH")
+        log.warning("IMOEX/RUGBI: нет данных")
+    else:
+        # Шаг 1: относительный momentum IMOEX vs RUGBI
+        sig_imoex = "IMOEX" if ret(pi,4) >= ret(pr,4) else "CASH"
+
+        # Шаг 2: asymm lookback (только если ≥4 нед в кэше)
+        if sig_imoex == "CASH" and len(pi) > 8:
+            cw = state.get("IMOEX_cash_w", 0)
+            if ret(pi,8) <= -8.0 and cw >= 4 and ret(pi,1) > 0:
+                sig_imoex = "IMOEX"
+                state["IMOEX_override"] = True
+                state["IMOEX_peak"] = imoex_now
+
+        # Шаг 3: trailing stop 3% для любого входа
+        if sig_imoex == "IMOEX" and imoex_now:
+            peak = state.get("IMOEX_peak") or imoex_now
+            if imoex_now > peak:
+                state["IMOEX_peak"] = imoex_now
+            elif imoex_now < peak * 0.97:
+                log.info(f"IMOEX trailing stop: {imoex_now:.0f} < {peak*0.97:.0f}")
+                sig_imoex = "CASH"
+                state["IMOEX_override"] = False
+                state["IMOEX_peak"] = 0
+            else:
+                state["IMOEX_peak"] = peak
+        else:
+            state["IMOEX_override"] = False
+            state["IMOEX_peak"] = 0
+
+        state["IMOEX_cash_w"] = 0 if sig_imoex == "IMOEX" \
+                                else state.get("IMOEX_cash_w", 0) + 1
+
+    # ── USDRUB ────────────────────────────────────────────────────────────────
+    if not data_ok["USD"] or not data_ok["RUGBI"]:
+        sig_usd = state.get("USD_sig", "CASH")
+        log.warning("USD: нет данных")
+    else:
+        raw_usd  = "USD" if (ret(pu,4) >= ret(pr,4) or
+                             ret(pu,1) >= ret(pr,1)) else "CASH"
+        prev_usd = state.get("USD_prev", raw_usd)
+        sig_usd  = raw_usd
+        if raw_usd == "CASH" and prev_usd == "USD":
+            if not state.get("USD_exit_pending"):
+                state["USD_exit_pending"] = True
+                sig_usd = "USD"
+            else:
+                state["USD_exit_pending"] = False
         else:
             state["USD_exit_pending"] = False
-    else:
-        state["USD_exit_pending"] = False
-
-    if sig_usd == "USD":
-        peak = state.get("USD_peak", usd_now)
-        if usd_now > peak:
+        if sig_usd == "USD" and usd_now:
+            peak = state.get("USD_peak") or usd_now
+            if usd_now > peak:
+                state["USD_peak"] = usd_now
+            elif usd_now < peak * 0.95:
+                log.info(f"USD trailing stop: {usd_now:.2f} < {peak*0.95:.2f}")
+                sig_usd = "CASH"
+                state["USD_peak"] = 0
+        elif not state.get("USD_peak") and usd_now:
             state["USD_peak"] = usd_now
-        elif usd_now < peak * 0.95:
-            sig_usd = "CASH"
-            state["USD_peak"] = 0
-    else:
-        state["USD_peak"] = usd_now
-    state["USD_prev"] = sig_usd
+        state["USD_prev"] = sig_usd
 
-    # ── Цены входа: SPY и GLD (через Yahoo) ──────────────────────────────
+    # ── Цены входа ────────────────────────────────────────────────────────────
     for key, sig, data, fn in [
-        ("SPY", sig_spy, spy_d, lambda p: ret(p, 4) > 0),
-        ("GLD", sig_gld, gld_d, lambda p: ret(p, 4) > 0),
+        ("SPY", sig_spy, spy_d, lambda p: ret(p,4) > 0),
+        ("GLD", sig_gld, gld_d, lambda p: ret(p,4) > 0),
     ]:
         prev = state.get(f"{key}_sig", "CASH")
-        if sig != "CASH" and prev == "CASH":
-            ep, ed = find_entry(data, fn)
-            state[f"{key}_entry"]      = ep
-            state[f"{key}_entry_date"] = ed
-        elif sig == "CASH":
+        if sig == "CASH":
             state.pop(f"{key}_entry",      None)
             state.pop(f"{key}_entry_date", None)
-        if sig != "CASH" and not state.get(f"{key}_entry") and data:
+        elif prev == "CASH" or not state.get(f"{key}_entry"):
             ep, ed = find_entry(data, fn)
-            state[f"{key}_entry"]      = ep
-            state[f"{key}_entry_date"] = ed
+            if ep:
+                state[f"{key}_entry"]      = ep
+                state[f"{key}_entry_date"] = ed
         state[f"{key}_sig"] = sig
 
-    # ── Цены входа: IMOEX и USD (через MOEX) ─────────────────────────────
     for key, sig, now_price in [
         ("IMOEX", sig_imoex, imoex_now),
         ("USD",   sig_usd,   usd_now),
     ]:
         prev = state.get(f"{key}_sig", "CASH")
-        if sig != "CASH" and prev == "CASH":
-            state[f"{key}_entry"]      = now_price
-            state[f"{key}_entry_date"] = datetime.today().strftime("%Y-%m-%d")
-        elif sig == "CASH":
+        if sig == "CASH":
             state.pop(f"{key}_entry",      None)
             state.pop(f"{key}_entry_date", None)
-        if sig != "CASH" and not state.get(f"{key}_entry"):
-            state[f"{key}_entry"]      = now_price
-            state[f"{key}_entry_date"] = datetime.today().strftime("%Y-%m-%d")
+        elif prev == "CASH" or not state.get(f"{key}_entry"):
+            if now_price:
+                state[f"{key}_entry"]      = now_price
+                state[f"{key}_entry_date"] = datetime.today().strftime("%Y-%m-%d")
         state[f"{key}_sig"] = sig
 
     save_state(state)
-
-    return {
-        "sig_spy":   sig_spy,   "p_spy":   spy_now,
-        "sig_gld":   sig_gld,   "p_gld":   gld_now,
-        "sig_imoex": sig_imoex, "p_imoex": imoex_now,
-        "sig_usd":   sig_usd,   "p_usd":   usd_now,
-        "state": state,
-    }
+    return dict(sig_spy=sig_spy, p_spy=spy_now,
+                sig_gld=sig_gld, p_gld=gld_now,
+                sig_imoex=sig_imoex, p_imoex=imoex_now,
+                sig_usd=sig_usd, p_usd=usd_now,
+                state=state, debug=debug, data_ok=data_ok)
 
 # ── FORMATTING ────────────────────────────────────────────────────────────────
 def block(key, sig, price, sym, state):
     if sig != "CASH":
         entry = state.get(f"{key}_entry")
         edate = state.get(f"{key}_entry_date", "")
-        if entry and price and entry > 0:
+        if entry and price:
             pct  = (price / entry - 1) * 100
             sign = "+" if pct >= 0 else ""
             pl   = f"\n  Вход {edate}: {sym}{entry:.2f} | P&L: {sign}{pct:.1f}%"
         else:
             pl = ""
         return f"🟢 ПОЗИЦИЯ ОТКРЫТА{pl}\n  Сейчас: {sym}{price:.2f}"
-    return f"⚪ ВНЕ ПОЗИЦИИ\n  Сейчас: {sym}{price:.2f}"
+    p_str = f"{sym}{price:.2f}" if price else "—"
+    return f"⚪ ВНЕ ПОЗИЦИИ\n  Сейчас: {p_str}"
 
 def make_report(r):
-    s = r["state"]
-    t = datetime.now().strftime("%d.%m.%Y %H:%M")
+    state = r["state"]
+    t     = datetime.now().strftime("%d.%m.%Y %H:%M")
     return (
         f"📊 Сигналы — {t}\n\n"
-        f"🇷🇺 IMOEX\n{block('IMOEX', r['sig_imoex'], r['p_imoex'], '', s)}\n\n"
-        f"💵 USDRUB\n{block('USD',   r['sig_usd'],   r['p_usd'],   '', s)}\n\n"
-        f"🇺🇸 SPY (S&P 500)\n{block('SPY', r['sig_spy'], r['p_spy'], '$', s)}\n\n"
-        f"🥇 GLD (Золото)\n{block('GLD', r['sig_gld'], r['p_gld'], '$', s)}"
+        f"🇷🇺 IMOEX\n"
+        f"{block('IMOEX', r['sig_imoex'], r['p_imoex'], '', state)}\n\n"
+        f"💵 USDRUB\n"
+        f"{block('USD', r['sig_usd'], r['p_usd'], '', state)}\n\n"
+        f"🇺🇸 SPY (S&P 500)\n"
+        f"{block('SPY', r['sig_spy'], r['p_spy'], '$', state)}\n\n"
+        f"🥇 GLD (Золото)\n"
+        f"{block('GLD', r['sig_gld'], r['p_gld'], '$', state)}"
     )
+
+def make_debug(r):
+    d  = r["debug"]
+    ok = r["data_ok"]
+    pts = d.get("pts", {})
+    lines = [f"🔍 Диагностика — {datetime.now().strftime('%d.%m.%Y %H:%M')}\n",
+             "── Данные (точек) ──"]
+    p_spy   = r["p_spy"]
+    p_gld   = r["p_gld"]
+    p_imoex = r["p_imoex"]
+    p_usd   = r["p_usd"]
+    lines.append(f"  SPY:   {'✅' if ok['SPY']   else '❌'} {pts.get('SPY',0)} нед"
+                 + (f"  | Сейчас: ${p_spy:.2f}" if p_spy else ""))
+    lines.append(f"  GLD:   {'✅' if ok['GLD']   else '❌'} {pts.get('GLD',0)} нед"
+                 + (f"  | Сейчас: ${p_gld:.2f}" if p_gld else ""))
+    lines.append(f"  IMOEX: {'✅' if ok['IMOEX'] else '❌'} {pts.get('IMOEX',0)} нед"
+                 + (f" | Сейчас: {p_imoex:.2f}" if p_imoex else ""))
+    lines.append(f"  RUGBI: {'✅' if ok['RUGBI'] else '❌'} {pts.get('RUGBI',0)} нед")
+    lines.append(f"  USD:   {'✅' if ok['USD']   else '❌'} {pts.get('USD',0)} нед"
+                 + (f"   | Сейчас: {p_usd:.2f}" if p_usd else ""))
+    lines.append("")
+    lines.append("── Momentum (4 нед) ──")
+    lines.append(f"  SPY:   {d.get('SPY_4w','?')}%")
+    lines.append(f"  GLD:   {d.get('GLD_4w','?')}%")
+    lines.append(f"  IMOEX: {d.get('IMOEX_4w','?')}% vs RUGBI: {d.get('RUGBI_4w','?')}%")
+    lines.append(f"  USD:   {d.get('USD_4w','?')}% (1нед: {d.get('USD_1w','?')}%)")
+    lines.append(f"  IMOEX 8нед: {d.get('IMOEX_8w','?')}%")
+    lines.append("")
+    lines.append("── Сигналы ──")
+    st = r["state"]
+    lines.append(f"  SPY:   {r['sig_spy']}")
+    lines.append(f"  GLD:   {r['sig_gld']}")
+    lines.append(f"  IMOEX: {r['sig_imoex']}  "
+                 f"(override={st.get('IMOEX_override',False)}, "
+                 f"cash_w={st.get('IMOEX_cash_w',0)}, "
+                 f"peak={st.get('IMOEX_peak',0):.0f})")
+    lines.append(f"  USD:   {r['sig_usd']}  "
+                 f"(peak={st.get('USD_peak',0):.2f})")
+    return "\n".join(lines)
 
 # ── COMMANDS ──────────────────────────────────────────────────────────────────
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Бот стратегических сигналов\n\n"
         "/signal — текущие позиции и P&L\n"
-        "/debug — сырые данные momentum\n"
-        "/resetall — полный сброс всех позиций\n"
+        "/debug — диагностика данных и моментов\n"
         "/setentry АКТИВ ЦЕНА ДАТА — ввод вручную\n"
+        "/resetall — сброс всех позиций\n"
         "/help — о стратегиях")
 
 async def cmd_signal(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -345,49 +436,21 @@ async def cmd_signal(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(make_report(r))
     except Exception as e:
         log.error(e)
-        await update.message.reply_text(f"❌ Ошибка: {e}")
+        await update.message.reply_text(f"Ошибка: {e}")
 
 async def cmd_debug(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Показывает сырые momentum-значения для диагностики"""
     await update.message.reply_text("⏳ Загружаю данные...")
     try:
-        r  = await asyncio.get_event_loop().run_in_executor(None, calc_all)
-        d  = r["state"].get("_debug", {})
-        s  = r["state"]
-
-        lines = [
-            f"🔍 DEBUG — {d.get('ts','?')}\n",
-            f"── Данные (точек) ──",
-            f"  SPY:   {d.get('spy_pts','?')} нед  | Сейчас: ${d.get('spy_now','?')}",
-            f"  GLD:   {d.get('gld_pts','?')} нед  | Сейчас: ${d.get('gld_now','?')}",
-            f"  IMOEX: {d.get('imoex_pts','?')} нед | Сейчас: {d.get('imoex_now','?')}",
-            f"  RUGBI: {d.get('rugbi_pts','?')} нед",
-            f"  USD:   {d.get('usd_pts','?')} нед  | Сейчас: {d.get('usd_now','?')}",
-            f"",
-            f"── Momentum (4 нед) ──",
-            f"  SPY:   {d.get('spy_4w','?'):+.2f}%" if d.get('spy_4w') is not None else "  SPY:   нет данных",
-            f"  GLD:   {d.get('gld_4w','?'):+.2f}%" if d.get('gld_4w') is not None else "  GLD:   нет данных",
-            f"  IMOEX: {d.get('imoex_4w','?'):+.2f}% vs RUGBI: {d.get('rugbi_4w','?'):+.2f}%" if d.get('imoex_4w') is not None else "  IMOEX: нет данных",
-            f"  USD:   {d.get('usd_4w','?'):+.2f}% (1нед: {d.get('usd_1w','?'):+.2f}%)" if d.get('usd_4w') is not None else "  USD:   нет данных",
-            f"  IMOEX 8нед: {d.get('imoex_8w','?'):+.2f}%" if d.get('imoex_8w') is not None else "  IMOEX 8нед: нет данных",
-            f"",
-            f"── Сигналы ──",
-            f"  SPY:   {r['sig_spy']}",
-            f"  GLD:   {r['sig_gld']}",
-            f"  IMOEX: {r['sig_imoex']} (override={s.get('IMOEX_override',False)}, cash_w={s.get('IMOEX_cash_w',0)}, peak={s.get('IMOEX_peak',0):.0f})",
-            f"  USD:   {r['sig_usd']} (peak={s.get('USD_peak',0):.2f})",
-        ]
-        await update.message.reply_text("\n".join(lines))
+        r = await asyncio.get_event_loop().run_in_executor(None, calc_all)
+        await update.message.reply_text(make_debug(r))
     except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {e}")
+        await update.message.reply_text(f"Ошибка: {e}")
 
 async def cmd_resetall(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Полный сброс всех позиций и состояния"""
-    if Path(STATE_FILE).exists():
-        Path(STATE_FILE).unlink()
+    save_state({})
     await update.message.reply_text(
-        "✅ Все позиции сброшены\n"
-        "Нажми /signal для пересчёта с нуля")
+        "✅ Все позиции сброшены — state.json очищен\n"
+        "Нажми /signal чтобы пересчитать с нуля.")
 
 async def cmd_setentry(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
@@ -410,30 +473,29 @@ async def cmd_setentry(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         state[f"{key}_sig"]        = key
         save_state(state)
         await update.message.reply_text(
-            f"✅ {key}: вход {price} от {date}")
+            f"✅ Вход по {key} обновлён\n"
+            f"  Цена: {price} | Дата: {date}")
     except Exception as e:
         await update.message.reply_text(f"Ошибка: {e}")
 
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "📋 Стратегии\n\n"
-        "🇺🇸 SPY — S&P 500 vs кэш\n"
-        "  Сигнал: 4нед momentum SPY > 0%\n"
-        "  CAGR: +16.6% | Max DD: −6.0%\n\n"
-        "🥇 GLD — Золото vs кэш\n"
-        "  Сигнал: 4нед momentum GLD > 0%\n"
-        "  CAGR: +9.9% | Max DD: −13.3%\n\n"
-        "🇷🇺 IMOEX — акции vs RUGBI\n"
-        "  Сигнал: IMOEX 4нед > RUGBI 4нед\n"
-        "  Trailing stop: 3% от пика\n"
-        "  CAGR: +13.3% | Max DD: −21.3%\n\n"
-        "💵 USD — доллар vs RUGBI\n"
-        "  Сигнал: 4нед ИЛИ 1нед USD > RUGBI\n"
-        "  Trailing stop: 5% от пика\n"
-        "  CAGR: +22.0% | Max DD: −6.7%\n\n"
-        "Сигналы еженедельные. Не является "
-        "инвестиционной рекомендацией.")
+        "📋 О стратегиях\n\n"
+        "Все стратегии — momentum модели. Каждую неделю "
+        "система сравнивает силу активов и держит позицию "
+        "в более сильном. Когда сила пропадает — уходит в кэш.\n\n"
+        "🇺🇸 SPY (S&P 500 vs кэш)\n"
+        "  CAGR: +15.2% | Max DD: 0%\n\n"
+        "🥇 GLD (Золото vs кэш)\n"
+        "  CAGR: +7.5% | Max DD: −9.1%\n\n"
+        "🇷🇺 IMOEX (акции vs облигации РФ)\n"
+        "  CAGR: +10.5% | Max DD: −14.0%\n\n"
+        "💵 USDRUB (доллар vs облигации РФ)\n"
+        "  CAGR: +15.6% | Max DD: −4.8%\n\n"
+        "Сигналы еженедельные.\n"
+        "Не является инвестиционной рекомендацией.")
 
+# ── MAIN ──────────────────────────────────────────────────────────────────────
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start",    cmd_start))
