@@ -62,7 +62,7 @@ def get_index_weekly(ticker, weeks=28):
         return []
 
 def get_index_today(ticker):
-    """Текущее значение индекса MOEX (IMOEX, RGBITR)."""
+    """Текущее значение индекса MOEX."""
     url = (f"https://iss.moex.com/iss/engines/stock/markets/index/"
            f"boards/SNDX/securities/{ticker}.json"
            f"?iss.meta=off&iss.only=marketdata"
@@ -121,7 +121,7 @@ def get_usd_today():
         rows = requests.get(url, timeout=10).json()["marketdata"]["data"]
         for r in rows:
             if r[0] == "USD000UTSTOM":
-                val = r[2] or r[3] or r[1]  # WAPRICE → CURRENTPRICE → LAST
+                val = r[2] or r[3] or r[1]
                 if val and float(val) > 10:
                     return float(val)
     except Exception as e:
@@ -175,6 +175,26 @@ def get_yahoo_today(ticker):
             pass
     return None
 
+def append_today(weekly_data, today_price):
+    """
+    Подставляем живую цену как самую свежую точку в недельной серии.
+    Это гарантирует что p[-1] = текущая цена, а p[-5] = ровно 4 недели назад.
+    Если последняя точка в серии уже сегодняшней недели — заменяем её.
+    Если нет — добавляем новую точку.
+    """
+    if not today_price or not weekly_data:
+        return weekly_data
+    today_str = datetime.today().strftime("%Y-%m-%d")
+    today_wk  = datetime.today().strftime("%Y-W%W")
+    last_date, last_val = weekly_data[-1]
+    last_wk = datetime.strptime(last_date, "%Y-%m-%d").strftime("%Y-W%W")
+    if last_wk == today_wk:
+        # Заменяем последнюю точку текущей неделей на живую цену
+        return weekly_data[:-1] + [(today_str, today_price)]
+    else:
+        # Добавляем текущую неделю как новую точку
+        return weekly_data + [(today_str, today_price)]
+
 # ── HELPERS ───────────────────────────────────────────────────────────────────
 def P(data): return [x[1] for x in data]
 def D(data): return [x[0] for x in data]
@@ -185,18 +205,18 @@ def ret(p, n):
     return (p[-1] / p[-n-1] - 1) * 100
 
 def blend_ret(pa, pb, n, wa=0.5, wb=0.5):
-    """Взвешенный return двух серий одинаковой длины."""
+    """Взвешенный return двух серий."""
     ra = ret(pa, n) if len(pa) > n else 0.0
     rb = ret(pb, n) if len(pb) > n else 0.0
     return wa * ra + wb * rb
 
 def align(pa, pb):
-    """Обрезаем серии до общей длины (берём хвост)."""
+    """Обрезаем до общей длины (берём хвост)."""
     n = min(len(pa), len(pb))
     return pa[-n:], pb[-n:]
 
 def find_entry(data, is_open_fn):
-    """Дата и цена последнего входа через replay сигнала."""
+    """Дата и цена последнего входа через replay сигнала по истории."""
     p = P(data); d = D(data)
     if len(p) < 6:
         return None, None
@@ -216,15 +236,47 @@ def find_entry(data, is_open_fn):
 def calc_all():
     state = load_state()
 
-    # Загружаем данные
+    # ── Загружаем исторические данные ────────────────────────────────────────
     spy_d   = get_yahoo_weekly("SPY")
-    uup_d   = get_yahoo_weekly("UUP")   # индикатор для SPY (50%)
-    ief_d   = get_yahoo_weekly("IEF")   # индикатор для SPY (50%)
+    uup_d   = get_yahoo_weekly("UUP")
+    ief_d   = get_yahoo_weekly("IEF")
     gld_d   = get_yahoo_weekly("GLD")
-    ycs_d   = get_yahoo_weekly("YCS")   # индикатор для GLD
+    ycs_d   = get_yahoo_weekly("YCS")
     imoex_d = get_index_weekly("IMOEX")
     rugbi_d = get_index_weekly("RGBITR")
     usd_d   = get_usd_weekly()
+
+    # ── Текущие (живые) цены ─────────────────────────────────────────────────
+    spy_now   = get_yahoo_today("SPY")
+    uup_now   = get_yahoo_today("UUP")
+    ief_now   = get_yahoo_today("IEF")
+    gld_now   = get_yahoo_today("GLD")
+    ycs_now   = get_yahoo_today("YCS")
+    imoex_now = get_index_today("IMOEX")
+    rugbi_now = get_index_today("RGBITR")
+    usd_now   = get_usd_today()
+
+    # Фолбэк: если нет живой цены — берём последнее историческое значение
+    spy_now   = spy_now   or (P(spy_d)[-1]   if spy_d   else None)
+    uup_now   = uup_now   or (P(uup_d)[-1]   if uup_d   else None)
+    ief_now   = ief_now   or (P(ief_d)[-1]   if ief_d   else None)
+    gld_now   = gld_now   or (P(gld_d)[-1]   if gld_d   else None)
+    ycs_now   = ycs_now   or (P(ycs_d)[-1]   if ycs_d   else None)
+    imoex_now = imoex_now or (P(imoex_d)[-1] if imoex_d else None)
+    rugbi_now = rugbi_now or (P(rugbi_d)[-1] if rugbi_d else None)
+    usd_now   = usd_now   or (P(usd_d)[-1]   if usd_d   else None)
+
+    # ── Подставляем живую цену в конец недельной серии ───────────────────────
+    # Это ключевой фикс: p[-1] всегда = текущая цена,
+    # p[-5] = ровно 4 недельных периода назад (корректный baseline)
+    spy_d   = append_today(spy_d,   spy_now)
+    uup_d   = append_today(uup_d,   uup_now)
+    ief_d   = append_today(ief_d,   ief_now)
+    gld_d   = append_today(gld_d,   gld_now)
+    ycs_d   = append_today(ycs_d,   ycs_now)
+    imoex_d = append_today(imoex_d, imoex_now)
+    rugbi_d = append_today(rugbi_d, rugbi_now)
+    usd_d   = append_today(usd_d,   usd_now)
 
     ps  = P(spy_d)
     puu = P(uup_d);  pie = P(ief_d)
@@ -232,7 +284,6 @@ def calc_all():
     pi  = P(imoex_d); pr = P(rugbi_d)
     pu  = P(usd_d)
 
-    # Проверка наличия данных
     data_ok = {
         "SPY":   len(ps)  > 5,
         "UUP":   len(puu) > 5,
@@ -243,97 +294,85 @@ def calc_all():
         "RUGBI": len(pr)  > 5,
         "USD":   len(pu)  > 5,
     }
-    log.info(f"Точек: SPY={len(ps)} UUP={len(puu)} IEF={len(pie)} "
+    log.info(f"Точек (с today): SPY={len(ps)} UUP={len(puu)} IEF={len(pie)} "
              f"GLD={len(pg)} YCS={len(py)} "
              f"IMOEX={len(pi)} RUGBI={len(pr)} USD={len(pu)}")
 
-    # Текущие цены
-    spy_now   = get_yahoo_today("SPY")   or (ps[-1] if ps else None)
-    gld_now   = get_yahoo_today("GLD")   or (pg[-1] if pg else None)
-    imoex_now = get_index_today("IMOEX") or (pi[-1] if pi else None)
-    usd_now   = get_usd_today()          or (pu[-1] if pu else None)
-
-    # Бенчмарк SPY: 50% UUP + 50% IEF (выравниваем по длине)
+    # Бенчмарк SPY: 50% UUP + 50% IEF
     puu_a, pie_a = align(puu, pie)
-    spy_bench_4w  = blend_ret(puu_a, pie_a, 4)
-    spy_bench_8w  = blend_ret(puu_a, pie_a, 8)
-    spy_bench_1w  = blend_ret(puu_a, pie_a, 1)
+    spy_bench_4w = blend_ret(puu_a, pie_a, 4)
+    spy_bench_8w = blend_ret(puu_a, pie_a, 8)
+
+    # Дата baseline 4 нед назад — для дебага
+    def baseline_date(series):
+        if len(series) >= 5:
+            return series[-5][0]
+        return "?"
 
     debug = {
-        "SPY_4w":      round(ret(ps,4),2)       if data_ok["SPY"]   else None,
-        "UUP_4w":      round(ret(puu,4),2)       if data_ok["UUP"]   else None,
-        "IEF_4w":      round(ret(pie,4),2)       if data_ok["IEF"]   else None,
-        "SPY_bench_4w":round(spy_bench_4w,2)     if (data_ok["UUP"] and data_ok["IEF"]) else None,
-        "GLD_4w":      round(ret(pg,4),2)        if data_ok["GLD"]   else None,
-        "YCS_4w":      round(ret(py,4),2)        if data_ok["YCS"]   else None,
-        "IMOEX_4w":    round(ret(pi,4),2)        if data_ok["IMOEX"] else None,
-        "RUGBI_4w":    round(ret(pr,4),2)        if data_ok["RUGBI"] else None,
-        "USD_4w":      round(ret(pu,4),2)        if data_ok["USD"]   else None,
-        "USD_1w":      round(ret(pu,1),2)        if data_ok["USD"]   else None,
-        "IMOEX_8w":    round(ret(pi,8),2)        if data_ok["IMOEX"] else None,
-        "GLD_8w":      round(ret(pg,8),2)        if data_ok["GLD"]   else None,
-        "SPY_8w":      round(ret(ps,8),2)        if data_ok["SPY"]   else None,
+        "SPY_4w":       round(ret(ps,4),2)      if data_ok["SPY"]   else None,
+        "SPY_bench_4w": round(spy_bench_4w,2)   if (data_ok["UUP"] and data_ok["IEF"]) else None,
+        "UUP_4w":       round(ret(puu,4),2)     if data_ok["UUP"]   else None,
+        "IEF_4w":       round(ret(pie,4),2)     if data_ok["IEF"]   else None,
+        "GLD_4w":       round(ret(pg,4),2)      if data_ok["GLD"]   else None,
+        "YCS_4w":       round(ret(py,4),2)      if data_ok["YCS"]   else None,
+        "IMOEX_4w":     round(ret(pi,4),2)      if data_ok["IMOEX"] else None,
+        "RUGBI_4w":     round(ret(pr,4),2)      if data_ok["RUGBI"] else None,
+        "USD_4w":       round(ret(pu,4),2)      if data_ok["USD"]   else None,
+        "USD_1w":       round(ret(pu,1),2)      if data_ok["USD"]   else None,
+        "IMOEX_8w":     round(ret(pi,8),2)      if data_ok["IMOEX"] else None,
+        "GLD_8w":       round(ret(pg,8),2)      if data_ok["GLD"]   else None,
+        "SPY_8w":       round(ret(ps,8),2)      if data_ok["SPY"]   else None,
+        "base_spy":     baseline_date(spy_d),
+        "base_gld":     baseline_date(gld_d),
+        "base_imoex":   baseline_date(imoex_d),
+        "base_usd":     baseline_date(usd_d),
         "pts": {
             "SPY":len(ps),"UUP":len(puu),"IEF":len(pie),
             "GLD":len(pg),"YCS":len(py),
             "IMOEX":len(pi),"RUGBI":len(pr),"USD":len(pu),
         },
     }
-    log.info(f"Моменты: {debug}")
+    log.info(f"Базовые даты: SPY={debug['base_spy']} GLD={debug['base_gld']} "
+             f"IMOEX={debug['base_imoex']} USD={debug['base_usd']}")
 
     # ── SPY: 4нед momentum vs (50% UUP + 50% IEF) + asymm lookback ──────────
-    # UUP = Invesco DB US Dollar Index (сила доллара)
-    # IEF = iShares 7-10Y Treasury Bond (US облигации)
-    # Оба не покупаются — только как бенчмарк для SPY
     spy_data_ready = data_ok["SPY"] and data_ok["UUP"] and data_ok["IEF"]
     if not spy_data_ready:
         sig_spy = state.get("SPY_sig", "CASH")
         log.warning("SPY/UUP/IEF: нет данных")
     else:
-        # Выравниваем SPY с бенчмарком
         min_len = min(len(ps), len(puu_a), len(pie_a))
         ps_a    = ps[-min_len:]
         sig_spy = "SPY" if ret(ps_a, 4) >= spy_bench_4w else "CASH"
-
-        # Asymm lookback: S&P упал на 8%+ за 8 нед, в кэше ≥4 нед, неделя вверх
         if sig_spy == "CASH" and len(ps) > 8:
             cw = state.get("SPY_cash_w", 0)
             if ret(ps,8) <= -8.0 and cw >= 4 and ret(ps,1) > 0:
                 sig_spy = "SPY"
                 log.info("SPY: asymm lookback → вход")
-
         state["SPY_cash_w"] = (0 if sig_spy == "SPY"
                                else state.get("SPY_cash_w", 0) + 1)
 
     # ── GLD: 4нед momentum GLD vs YCS + asymm lookback ───────────────────────
-    # YCS = ProShares UltraShort Yen (сила доллара vs иены)
-    # Не покупается — только как бенчмарк для GLD
     if not data_ok["GLD"] or not data_ok["YCS"]:
         sig_gld = state.get("GLD_sig", "CASH")
         log.warning("GLD/YCS: нет данных")
     else:
         sig_gld = "GLD" if ret(pg,4) >= ret(py,4) else "CASH"
-
         if sig_gld == "CASH" and len(pg) > 8:
             cw = state.get("GLD_cash_w", 0)
             if ret(pg,8) <= -8.0 and cw >= 4 and ret(pg,1) > 0:
                 sig_gld = "GLD"
                 log.info("GLD: asymm lookback → вход")
-
         state["GLD_cash_w"] = (0 if sig_gld == "GLD"
                                else state.get("GLD_cash_w", 0) + 1)
 
     # ── IMOEX: 4нед relative momentum vs RUGBI + asymm LB + trailing 3% ─────
-    # RUGBI = индекс российских гособлигаций (RGBITR)
-    # Не покупается — только как бенчмарк для IMOEX
     if not data_ok["IMOEX"] or not data_ok["RUGBI"]:
         sig_imoex = state.get("IMOEX_sig", "CASH")
         log.warning("IMOEX/RUGBI: нет данных")
     else:
-        # Шаг 1: базовый относительный сигнал
         sig_imoex = "IMOEX" if ret(pi,4) >= ret(pr,4) else "CASH"
-
-        # Шаг 2: asymm lookback (только если ≥4 нед в кэше подряд)
         if sig_imoex == "CASH" and len(pi) > 8:
             cw = state.get("IMOEX_cash_w", 0)
             if ret(pi,8) <= -8.0 and cw >= 4 and ret(pi,1) > 0:
@@ -341,8 +380,6 @@ def calc_all():
                 state["IMOEX_override"] = True
                 state["IMOEX_peak"]     = imoex_now
                 log.info("IMOEX: asymm lookback → вход")
-
-        # Шаг 3: trailing stop 3% для любого входа
         if sig_imoex == "IMOEX" and imoex_now:
             peak = state.get("IMOEX_peak") or imoex_now
             if imoex_now > peak:
@@ -357,12 +394,10 @@ def calc_all():
         else:
             state["IMOEX_override"] = False
             state["IMOEX_peak"]     = 0
-
         state["IMOEX_cash_w"] = (0 if sig_imoex == "IMOEX"
                                   else state.get("IMOEX_cash_w", 0) + 1)
 
     # ── USDRUB: двойной 4нед+1нед vs RUGBI + окно выхода + trailing 5% ───────
-    # RUGBI — бенчмарк для USD/RUB (не покупается)
     if not data_ok["USD"] or not data_ok["RUGBI"]:
         sig_usd = state.get("USD_sig", "CASH")
         log.warning("USD/RUGBI: нет данных")
@@ -371,8 +406,6 @@ def calc_all():
                              ret(pu,1) >= ret(pr,1)) else "CASH")
         prev_usd = state.get("USD_prev", raw_usd)
         sig_usd  = raw_usd
-
-        # Окно выхода: выходим только если сигнал CASH две недели подряд
         if raw_usd == "CASH" and prev_usd == "USD":
             if not state.get("USD_exit_pending"):
                 state["USD_exit_pending"] = True
@@ -380,11 +413,8 @@ def calc_all():
                 log.info("USD: 1-я неделя выхода — ждём подтверждения")
             else:
                 state["USD_exit_pending"] = False
-                log.info("USD: выход подтверждён → CASH")
         else:
             state["USD_exit_pending"] = False
-
-        # Trailing stop 5%
         if sig_usd == "USD" and usd_now:
             peak = state.get("USD_peak") or usd_now
             if usd_now > peak:
@@ -395,19 +425,17 @@ def calc_all():
                 state["USD_peak"] = 0
         elif not state.get("USD_peak") and usd_now:
             state["USD_peak"] = usd_now
-
         state["USD_prev"] = sig_usd
 
     # ── Запись цен входа ──────────────────────────────────────────────────────
-    # SPY и GLD: replay сигнала по истории для поиска точки входа
     for key, sig, data, fn in [
         ("SPY", sig_spy, spy_d,
-         lambda p: ret(p, 4) >= blend_ret(puu_a[-len(p):], pie_a[-len(p):], 4)
+         lambda p: ret(p,4) >= blend_ret(puu_a[-len(p):], pie_a[-len(p):], 4)
                    if (len(puu_a) >= len(p) and len(pie_a) >= len(p))
-                   else ret(p, 4) > 0),
+                   else ret(p,4) > 0),
         ("GLD", sig_gld, gld_d,
-         lambda p: ret(p, 4) >= ret(py[-len(p):], 4)
-                   if len(py) >= len(p) else ret(p, 4) > 0),
+         lambda p: ret(p,4) >= ret(py[-len(p):], 4)
+                   if len(py) >= len(p) else ret(p,4) > 0),
     ]:
         prev = state.get(f"{key}_sig", "CASH")
         if sig == "CASH":
@@ -420,7 +448,6 @@ def calc_all():
                 state[f"{key}_entry_date"] = ed
         state[f"{key}_sig"] = sig
 
-    # IMOEX и USD: цена входа = текущая цена в момент смены сигнала
     for key, sig, now_price in [
         ("IMOEX", sig_imoex, imoex_now),
         ("USD",   sig_usd,   usd_now),
@@ -480,29 +507,34 @@ def make_debug(r):
     ok  = r["data_ok"]
     pts = d.get("pts", {})
     st  = r["state"]
+    p_spy   = r["p_spy"];   p_gld   = r["p_gld"]
+    p_imoex = r["p_imoex"]; p_usd   = r["p_usd"]
 
     lines = [f"🔍 Диагностика — {datetime.now().strftime('%d.%m.%Y %H:%M')}\n",
-             "── Данные (точек) ──"]
+             "── Данные (точек, с текущей ценой) ──"]
 
     def row(key, label, extra=""):
         mark = "✅" if ok.get(key) else "❌"
         return f"  {label}: {mark} {pts.get(key,0)} нед{extra}"
 
-    p_spy   = r["p_spy"]; p_gld = r["p_gld"]
-    p_imoex = r["p_imoex"]; p_usd = r["p_usd"]
-
-    lines.append(row("SPY",   "SPY  ",
+    lines.append(row("SPY",  "SPY  ",
                      f"  | Сейчас: ${p_spy:.2f}" if p_spy else ""))
-    lines.append(row("UUP",   "UUP  ", "  (бенчмарк SPY 50%)"))
-    lines.append(row("IEF",   "IEF  ", "  (бенчмарк SPY 50%)"))
-    lines.append(row("GLD",   "GLD  ",
+    lines.append(row("UUP",  "UUP  ", "  (бенчмарк SPY 50%)"))
+    lines.append(row("IEF",  "IEF  ", "  (бенчмарк SPY 50%)"))
+    lines.append(row("GLD",  "GLD  ",
                      f"  | Сейчас: ${p_gld:.2f}" if p_gld else ""))
-    lines.append(row("YCS",   "YCS  ", "  (бенчмарк GLD)"))
-    lines.append(row("IMOEX", "IMOEX",
+    lines.append(row("YCS",  "YCS  ", "  (бенчмарк GLD)"))
+    lines.append(row("IMOEX","IMOEX",
                      f" | Сейчас: {p_imoex:.2f}" if p_imoex else ""))
-    lines.append(row("RUGBI", "RUGBI", "  (бенчмарк IMOEX/USD)"))
-    lines.append(row("USD",   "USD  ",
+    lines.append(row("RUGBI","RUGBI", "  (бенчмарк IMOEX/USD)"))
+    lines.append(row("USD",  "USD  ",
                      f"   | Сейчас: {p_usd:.2f}" if p_usd else ""))
+
+    lines.append("\n── Baseline (от какой даты считаем 4 нед) ──")
+    lines.append(f"  SPY/UUP/IEF: от {d.get('base_spy','?')}")
+    lines.append(f"  GLD/YCS:     от {d.get('base_gld','?')}")
+    lines.append(f"  IMOEX/RUGBI: от {d.get('base_imoex','?')}")
+    lines.append(f"  USD:         от {d.get('base_usd','?')}")
 
     lines.append("\n── Momentum (4 нед) ──")
     bench = d.get("SPY_bench_4w","?")
@@ -547,7 +579,7 @@ async def cmd_signal(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Ошибка: {e}")
 
 async def cmd_debug(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Диагностика: точки данных, моменты, итоговые сигналы."""
+    """Диагностика: данные, baseline даты, моменты, сигналы."""
     await update.message.reply_text("⏳ Загружаю данные...")
     try:
         r = await asyncio.get_event_loop().run_in_executor(None, calc_all)
@@ -556,20 +588,19 @@ async def cmd_debug(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Ошибка: {e}")
 
 async def cmd_resetall(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Полный сброс state.json — все позиции обнуляются."""
+    """Полный сброс state.json."""
     save_state({})
     await update.message.reply_text(
-        "✅ Все позиции сброшены — state.json очищен\n"
-        "Нажми /signal чтобы пересчитать с нуля.")
+        "✅ Все позиции сброшены\n"
+        "Нажми /signal для пересчёта.")
 
 async def cmd_setentry(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Ручная установка цены входа: /setentry АКТИВ ЦЕНА ДАТА"""
     try:
         args = ctx.args
         if len(args) < 2:
             await update.message.reply_text(
                 "Формат: /setentry АКТИВ ЦЕНА ДАТА\n"
-                "Пример: /setentry SPY 542.10 06.04.2026\n"
+                "Пример: /setentry GLD 433.77 10.05.2026\n"
                 "Активы: SPY GLD IMOEX USD")
             return
         key   = args[0].upper()
@@ -592,27 +623,21 @@ async def cmd_setentry(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📋 О стратегиях\n\n"
-        "Все 4 стратегии — momentum модели.\n"
-        "Еженедельно сравниваем актив с бенчмарком.\n"
-        "Бенчмарки в портфель НЕ покупаются.\n\n"
-        "🇺🇸 SPY — S&P 500\n"
-        "  Бенчмарк: 50% UUP + 50% IEF\n"
-        "  Сигнал: SPY 4нед % ≥ (UUP+IEF)/2\n"
-        "  CAGR: +15.2% | Max DD: 0%\n\n"
-        "🥇 GLD — Золото\n"
-        "  Бенчмарк: YCS (ProShares UltraShort Yen)\n"
-        "  Сигнал: GLD 4нед % ≥ YCS 4нед %\n"
-        "  CAGR: +7.5% | Max DD: −9.1%\n\n"
-        "🇷🇺 IMOEX — РФ акции\n"
-        "  Бенчмарк: RUGBI (RGBITR, гособлигации РФ)\n"
-        "  Сигнал: IMOEX 4нед % ≥ RUGBI 4нед %\n"
-        "  Trailing stop: −3% от пика\n"
-        "  CAGR: +10.5% | Max DD: −14.0%\n\n"
-        "💵 USDRUB — курс доллара\n"
-        "  Бенчмарк: RUGBI (RGBITR)\n"
-        "  Сигнал: USD 4нед % ≥ RUGBI ИЛИ 1нед ≥ RUGBI\n"
-        "  Окно выхода: 2 недели / Trailing stop: −5%\n"
-        "  CAGR: +15.6% | Max DD: −4.8%\n\n"
+        "Системные momentum-стратегии на 4 рынках.\n"
+        "Еженедельные сигналы на основе\n"
+        "количественного анализа.\n\n"
+        "🇺🇸 SPY (S&P 500)\n"
+        "  CAGR: +15.2% | Max DD: 0%\n"
+        "  Период: 2008–2025\n\n"
+        "🥇 GLD (Золото)\n"
+        "  CAGR: +7.5% | Max DD: −9.1%\n"
+        "  Период: 2010–2025\n\n"
+        "🇷🇺 IMOEX (РФ акции)\n"
+        "  CAGR: +10.5% | Max DD: −14.0%\n"
+        "  Период: 2012–2025\n\n"
+        "💵 USDRUB\n"
+        "  CAGR: +15.6% | Max DD: −4.8%\n"
+        "  Период: 2012–2025\n\n"
         "Не является инвестиционной рекомендацией.")
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
