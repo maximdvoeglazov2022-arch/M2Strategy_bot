@@ -177,22 +177,21 @@ def get_yahoo_today(ticker):
 
 def append_today(weekly_data, today_price):
     """
-    Подставляем живую цену как самую свежую точку в недельной серии.
-    Это гарантирует что p[-1] = текущая цена, а p[-5] = ровно 4 недели назад.
-    Если последняя точка в серии уже сегодняшней недели — заменяем её.
-    Если нет — добавляем новую точку.
+    Подставляем живую цену в конец недельной серии.
+    Если последняя точка не старше 7 дней — заменяем её (та же рабочая неделя).
+    Если старше 7 дней — добавляем новую точку (началась новая неделя).
     """
     if not today_price or not weekly_data:
         return weekly_data
     today_str = datetime.today().strftime("%Y-%m-%d")
-    today_wk  = datetime.today().strftime("%Y-W%W")
-    last_date, last_val = weekly_data[-1]
-    last_wk = datetime.strptime(last_date, "%Y-%m-%d").strftime("%Y-W%W")
-    if last_wk == today_wk:
-        # Заменяем последнюю точку текущей неделей на живую цену
+    last_date = weekly_data[-1][0]
+    last_dt   = datetime.strptime(last_date, "%Y-%m-%d")
+    days_diff = (datetime.today() - last_dt).days
+    if days_diff <= 7:
+        # Заменяем — это та же неделя или начало следующей (пн после пт)
         return weekly_data[:-1] + [(today_str, today_price)]
     else:
-        # Добавляем текущую неделю как новую точку
+        # Прошло больше недели — добавляем новую точку
         return weekly_data + [(today_str, today_price)]
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
