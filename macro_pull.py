@@ -72,7 +72,8 @@ def brent():
 
 
 def moex(sec, frm):
-    js = json.loads(fetch(MOEX.format(sec=sec, frm=frm)).decode("utf-8"))
+    # ISS ждёт полную дату: "2026-01" он не понимает, нужно "2026-01-01"
+    js = json.loads(fetch(MOEX.format(sec=sec, frm=frm + "-01")).decode("utf-8"))
     c = js["candles"]
     ci = c["columns"].index("close")
     ti = c["columns"].index("end") if "end" in c["columns"] else c["columns"].index("begin")
@@ -114,7 +115,7 @@ def main():
         try:
             got = fn()
         except Exception as e:
-            print("  %-8s не загрузился: %s" % (key, e))
+            print("  %-8s НЕ ЗАГРУЗИЛСЯ: %s: %s" % (key, type(e).__name__, e))
             continue
         n = 0
         for month in sorted(got):
