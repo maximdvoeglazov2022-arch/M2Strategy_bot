@@ -1,15 +1,15 @@
 {
- "updated": "2026-11-08 13:37 UTC",
+ "updated": "2026-11-08 13:40 UTC",
  "signals": [
   {
    "key": "IMOEX",
    "name": "Индекс МосБиржи",
    "currency": "",
    "open": true,
-   "price": 2484.67,
+   "price": 2484.58,
    "entry": 2484.67,
    "entry_date": "2026-11-08",
-   "pnl": 0.0,
+   "pnl": -0.0,
    "ok": true
   },
   {

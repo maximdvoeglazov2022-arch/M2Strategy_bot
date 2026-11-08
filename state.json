@@ -1,6 +1,6 @@
 {
-  "SPY_cash_w": 1,
-  "GLD_cash_w": 1,
+  "SPY_cash_w": 2,
+  "GLD_cash_w": 2,
   "IMOEX_peak": 2484.67,
   "IMOEX_cash_w": 0,
   "USD_exit_pending": false,
