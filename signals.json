@@ -1,15 +1,15 @@
 {
- "updated": "2026-11-10 15:17 UTC",
+ "updated": "2026-11-11 14:47 UTC",
  "signals": [
   {
    "key": "IMOEX",
    "name": "Индекс МосБиржи",
    "currency": "",
-   "open": false,
-   "price": 2443.69,
-   "entry": null,
-   "entry_date": "",
-   "pnl": null,
+   "open": true,
+   "price": 2494.69,
+   "entry": 2494.69,
+   "entry_date": "2026-11-11",
+   "pnl": 0.0,
    "ok": true
   },
   {
@@ -17,10 +17,10 @@
    "name": "Фьючерс USD/RUB",
    "currency": "",
    "open": true,
-   "price": 83.15,
+   "price": 83.18,
    "entry": 82.32,
    "entry_date": "2026-11-08",
-   "pnl": 1.01,
+   "pnl": 1.05,
    "ok": true
   },
   {
@@ -28,7 +28,7 @@
    "name": "S&P 500",
    "currency": "$",
    "open": false,
-   "price": 750.59,
+   "price": 755.3,
    "entry": null,
    "entry_date": "",
    "pnl": null,
@@ -39,7 +39,7 @@
    "name": "Золото",
    "currency": "$",
    "open": false,
-   "price": 371.02,
+   "price": 367.94,
    "entry": null,
    "entry_date": "",
    "pnl": null,
