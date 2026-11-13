@@ -1,17 +1,19 @@
 {
-  "SPY_cash_w": 6,
-  "GLD_cash_w": 6,
-  "IMOEX_peak": 2494.69,
+  "SPY_cash_w": 7,
+  "GLD_cash_w": 0,
+  "IMOEX_peak": 2515.2,
   "IMOEX_cash_w": 0,
   "USD_exit_pending": false,
   "USD_prev": "USD",
   "SPY_sig": "CASH",
-  "GLD_sig": "CASH",
+  "GLD_sig": "GLD",
   "IMOEX_sig": "IMOEX",
   "USD_entry": 82.3211,
   "USD_entry_date": "2026-11-08",
   "USD_sig": "USD",
   "IMOEX_override": false,
   "IMOEX_entry": 2494.69,
-  "IMOEX_entry_date": "2026-11-11"
+  "IMOEX_entry_date": "2026-11-11",
+  "GLD_entry": 398.4700012207031,
+  "GLD_entry_date": "2026-08-03"
 }
