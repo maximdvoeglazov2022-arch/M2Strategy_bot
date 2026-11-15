@@ -1,0 +1,21 @@
+{
+ "basket": [
+  "CBOM",
+  "CNRU",
+  "POSI",
+  "LKOH",
+  "SNGSP",
+  "FLOT",
+  "TATNP"
+ ],
+ "entry": {
+  "CBOM": 11.219,
+  "CNRU": 913.2,
+  "FLOT": 81.08,
+  "LKOH": 6045.5,
+  "POSI": 1254.0,
+  "SNGSP": 42.91,
+  "TATNP": 584.1
+ },
+ "week": "2026-11-13"
+}
