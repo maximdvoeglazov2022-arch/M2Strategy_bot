@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-15 18:22 UTC",
+ "updated": "2026-11-16 16:35 UTC",
  "spec": "M2 Global Macro v1.1",
  "signals": [
   {
@@ -7,23 +7,23 @@
    "name": "Индекс МосБиржи",
    "currency": "",
    "open": true,
-   "price": 2511.1,
+   "price": 2479.69,
    "entry": 2273.87,
    "entry_date": "2026-09-25",
-   "pnl": 10.43,
+   "pnl": 9.05,
    "ok": true,
    "weight_held": 1.0,
    "weight_target": 1.0,
    "signal": 1,
-   "obs": "2026-11-13",
-   "base_date": "2026-08-14",
+   "obs": "2026-11-16",
+   "base_date": "2026-08-18",
    "window": "90 calendar",
    "indicator": "RVI",
-   "excess": 38.87,
-   "flip_level": 1680.7494,
-   "to_flip": -33.07,
-   "weeks_in_state": 8,
-   "week_closed": true
+   "excess": 41.84,
+   "flip_level": 1580.8872,
+   "to_flip": -36.25,
+   "weeks_in_state": 9,
+   "week_closed": false
   },
   {
    "key": "USD",
@@ -38,22 +38,22 @@
    "weight_held": 0.0,
    "weight_target": 0.0,
    "signal": 0,
-   "obs": "2026-11-13",
-   "base_date": "2026-10-09",
+   "obs": "2026-11-16",
+   "base_date": "2026-10-12",
    "window": "35 calendar",
    "indicator": "RUGBITR1Y",
-   "excess": -4.19,
-   "flip_level": 85.707,
-   "to_flip": 4.33,
-   "weeks_in_state": 7,
-   "week_closed": true
+   "excess": -2.99,
+   "flip_level": 84.6616,
+   "to_flip": 3.06,
+   "weeks_in_state": 8,
+   "week_closed": false
   },
   {
    "key": "GLD",
    "name": "Золото",
    "currency": "$",
    "open": false,
-   "price": 355.45,
+   "price": 353.495,
    "entry": null,
    "entry_date": "",
    "pnl": null,
@@ -61,16 +61,16 @@
    "weight_held": 0.0,
    "weight_target": 0.0,
    "signal": 0,
-   "obs": "2026-11-13",
-   "base_date": "2026-05-11",
+   "obs": "2026-11-16",
+   "base_date": "2026-05-12",
    "window": "130 trading",
    "indicator": "YCS",
-   "excess": -25.1,
-   "flip_level": 464.5601,
-   "to_flip": 30.7,
-   "weeks_in_state": 24,
-   "week_closed": true,
-   "overheat_z": 0.01,
+   "excess": -24.66,
+   "flip_level": 460.2651,
+   "to_flip": 30.2,
+   "weeks_in_state": 25,
+   "week_closed": false,
+   "overheat_z": 0.0,
    "overheat_on": false
   },
   {
@@ -78,7 +78,7 @@
    "name": "S&P 500",
    "currency": "$",
    "open": false,
-   "price": 754.37,
+   "price": 746.52,
    "entry": null,
    "entry_date": "",
    "pnl": null,
@@ -86,16 +86,16 @@
    "weight_held": 0.0,
    "weight_target": 0.0,
    "signal": 0,
-   "obs": "2026-11-13",
-   "base_date": "2026-05-26",
+   "obs": "2026-11-16",
+   "base_date": "2026-05-27",
    "window": "120 trading",
    "indicator": "IEF+UUP",
-   "excess": -0.88,
-   "flip_level": 760.9481,
-   "to_flip": 0.87,
-   "weeks_in_state": 2,
-   "week_closed": true,
-   "overheat_z": 0.41,
+   "excess": -2.02,
+   "flip_level": 761.6379,
+   "to_flip": 2.03,
+   "weeks_in_state": 3,
+   "week_closed": false,
+   "overheat_z": 0.26,
    "overheat_on": false
   }
  ],
@@ -112,124 +112,128 @@
    {
     "ticker": "CBOM",
     "name": "МКБ ао",
-    "ret6m": 81.83,
-    "price": 11.186,
+    "ret6m": 75.91,
+    "price": 10.799,
     "entry": 11.219,
-    "since_rebalance": -0.29,
+    "since_rebalance": -3.74,
     "weight": 0.1429
    },
    {
     "ticker": "CNRU",
     "name": "iЦиан",
-    "ret6m": 42.05,
-    "price": 910.0,
+    "ret6m": 44.21,
+    "price": 917.2,
     "entry": 913.2,
-    "since_rebalance": -0.35,
+    "since_rebalance": 0.44,
     "weight": 0.1429
    },
    {
     "ticker": "POSI",
     "name": "iПозитив",
-    "ret6m": 24.87,
-    "price": 1248.0,
+    "ret6m": 30.93,
+    "price": 1298.6,
     "entry": 1254.0,
-    "since_rebalance": -0.48,
+    "since_rebalance": 3.56,
     "weight": 0.1429
    },
    {
     "ticker": "LKOH",
     "name": "ЛУКОЙЛ",
-    "ret6m": 17.45,
-    "price": 6033.5,
+    "ret6m": 14.6,
+    "price": 5980.5,
     "entry": 6045.5,
-    "since_rebalance": -0.2,
+    "since_rebalance": -1.08,
     "weight": 0.1429
    },
    {
     "ticker": "SNGSP",
     "name": "Сургнфгз-п",
-    "ret6m": 6.98,
-    "price": 42.93,
+    "ret6m": 4.03,
+    "price": 42.575,
     "entry": 42.91,
-    "since_rebalance": 0.05,
+    "since_rebalance": -0.78,
     "weight": 0.1429
    },
    {
     "ticker": "FLOT",
     "name": "Совкомфлот",
-    "ret6m": 2.84,
-    "price": 81.35,
+    "ret6m": 0.21,
+    "price": 80.86,
     "entry": 81.08,
-    "since_rebalance": 0.33,
+    "since_rebalance": -0.27,
     "weight": 0.1429
    },
    {
     "ticker": "TATNP",
     "name": "Татнфт 3ап",
-    "ret6m": 2.35,
-    "price": 587.6,
+    "ret6m": -1.96,
+    "price": 575.4,
     "entry": 584.1,
-    "since_rebalance": 0.6,
+    "since_rebalance": -1.49,
     "weight": 0.1429
    }
   ],
-  "basket_return_since_rebalance": -0.05,
+  "basket_return_since_rebalance": -0.48,
   "preliminary_top": [
    {
     "ticker": "CBOM",
     "name": "МКБ ао",
-    "ret6m": 81.83
+    "ret6m": 75.91
    },
    {
     "ticker": "CNRU",
     "name": "iЦиан",
-    "ret6m": 42.05
+    "ret6m": 44.21
    },
    {
     "ticker": "POSI",
     "name": "iПозитив",
-    "ret6m": 24.87
+    "ret6m": 30.93
    },
    {
     "ticker": "LKOH",
     "name": "ЛУКОЙЛ",
-    "ret6m": 17.45
+    "ret6m": 14.6
    },
    {
     "ticker": "SNGSP",
     "name": "Сургнфгз-п",
-    "ret6m": 6.98
+    "ret6m": 4.03
+   },
+   {
+    "ticker": "UGLD",
+    "name": "ЮГК",
+    "ret6m": 2.73
    },
    {
     "ticker": "FLOT",
     "name": "Совкомфлот",
-    "ret6m": 2.84
-   },
-   {
-    "ticker": "TATNP",
-    "name": "Татнфт 3ап",
-    "ret6m": 2.35
+    "ret6m": 0.21
    }
   ],
   "watch": [
    {
-    "ticker": "TATN",
-    "name": "Татнфт 3ао",
-    "ret6m": -0.08
+    "ticker": "X5",
+    "name": "КЦ ИКС 5",
+    "ret6m": -1.19
+   },
+   {
+    "ticker": "TATNP",
+    "name": "Татнфт 3ап",
+    "ret6m": -1.96
    },
    {
     "ticker": "NVTK",
     "name": "Новатэк ао",
-    "ret6m": -0.42
-   },
-   {
-    "ticker": "X5",
-    "name": "КЦ ИКС 5",
-    "ret6m": -0.52
+    "ret6m": -2.3
    }
   ],
-  "pending_out": [],
-  "pending_in": [],
+  "pending_out": [
+   "TATNP"
+  ],
+  "pending_in": [
+   "UGLD"
+  ],
   "note": "цены без дивидендов; предварительный список вступит в силу на закрытии недели"
  },
  "sources": {
