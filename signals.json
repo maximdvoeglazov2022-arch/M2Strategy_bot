@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-17 16:34 UTC",
+ "updated": "2026-11-18 16:03 UTC",
  "spec": "M2 Global Macro v1.1",
  "signals": [
   {
@@ -7,21 +7,21 @@
    "name": "Индекс МосБиржи",
    "currency": "",
    "open": true,
-   "price": 2503.02,
+   "price": 2469.95,
    "entry": 2273.87,
    "entry_date": "2026-09-25",
-   "pnl": 10.08,
+   "pnl": 8.62,
    "ok": true,
    "weight_held": 1.0,
    "weight_target": 1.0,
    "signal": 1,
-   "obs": "2026-11-17",
-   "base_date": "2026-08-19",
+   "obs": "2026-11-18",
+   "base_date": "2026-08-20",
    "window": "90 calendar",
    "indicator": "RVI",
-   "excess": 42.58,
-   "flip_level": 1578.0633,
-   "to_flip": -36.95,
+   "excess": 46.56,
+   "flip_level": 1482.252,
+   "to_flip": -39.99,
    "weeks_in_state": 9,
    "week_closed": false
   },
@@ -30,7 +30,7 @@
    "name": "Доллар к рублю",
    "currency": "",
    "open": false,
-   "price": 82.5143,
+   "price": 82.4529,
    "entry": null,
    "entry_date": "",
    "pnl": null,
@@ -38,13 +38,13 @@
    "weight_held": 0.0,
    "weight_target": 0.0,
    "signal": 0,
-   "obs": "2026-11-17",
-   "base_date": "2026-10-13",
+   "obs": "2026-11-18",
+   "base_date": "2026-10-14",
    "window": "35 calendar",
    "indicator": "RUGBITR1Y",
-   "excess": -2.6,
-   "flip_level": 84.6949,
-   "to_flip": 2.64,
+   "excess": -2.73,
+   "flip_level": 84.7445,
+   "to_flip": 2.78,
    "weeks_in_state": 8,
    "week_closed": false
   },
@@ -53,7 +53,7 @@
    "name": "Золото",
    "currency": "$",
    "open": false,
-   "price": 354.495,
+   "price": 343.76,
    "entry": null,
    "entry_date": "",
    "pnl": null,
@@ -61,16 +61,16 @@
    "weight_held": 0.0,
    "weight_target": 0.0,
    "signal": 0,
-   "obs": "2026-11-17",
-   "base_date": "2026-05-13",
+   "obs": "2026-11-18",
+   "base_date": "2026-05-14",
    "window": "130 trading",
    "indicator": "YCS",
-   "excess": -23.3,
-   "flip_level": 454.7997,
-   "to_flip": 28.3,
+   "excess": -24.11,
+   "flip_level": 446.7417,
+   "to_flip": 29.96,
    "weeks_in_state": 25,
    "week_closed": false,
-   "overheat_z": 0.04,
+   "overheat_z": 0.0,
    "overheat_on": false
   },
   {
@@ -78,7 +78,7 @@
    "name": "S&P 500",
    "currency": "$",
    "open": false,
-   "price": 730.545,
+   "price": 729.84,
    "entry": null,
    "entry_date": "",
    "pnl": null,
@@ -86,13 +86,13 @@
    "weight_held": 0.0,
    "weight_target": 0.0,
    "signal": 0,
-   "obs": "2026-11-17",
-   "base_date": "2026-05-28",
+   "obs": "2026-11-18",
+   "base_date": "2026-05-29",
    "window": "120 trading",
    "indicator": "IEF+UUP",
-   "excess": -4.79,
-   "flip_level": 766.5179,
-   "to_flip": 4.92,
+   "excess": -5.46,
+   "flip_level": 770.9025,
+   "to_flip": 5.63,
    "weeks_in_state": 3,
    "week_closed": false,
    "overheat_z": 0.0,
@@ -112,120 +112,120 @@
    {
     "ticker": "CBOM",
     "name": "МКБ ао",
-    "ret6m": 74.45,
-    "price": 10.795,
+    "ret6m": 72.31,
+    "price": 10.516,
     "entry": 11.219,
-    "since_rebalance": -3.78,
+    "since_rebalance": -6.27,
     "weight": 0.1429
    },
    {
     "ticker": "CNRU",
     "name": "iЦиан",
-    "ret6m": 45.29,
-    "price": 919.4,
+    "ret6m": 45.6,
+    "price": 922.8,
     "entry": 913.2,
-    "since_rebalance": 0.68,
+    "since_rebalance": 1.05,
     "weight": 0.1429
    },
    {
     "ticker": "POSI",
     "name": "iПозитив",
-    "ret6m": 31.92,
-    "price": 1303.4,
+    "ret6m": 32.88,
+    "price": 1285.2,
     "entry": 1254.0,
-    "since_rebalance": 3.94,
+    "since_rebalance": 2.49,
     "weight": 0.1429
    },
    {
     "ticker": "LKOH",
     "name": "ЛУКОЙЛ",
-    "ret6m": 16.04,
-    "price": 6044.0,
+    "ret6m": 16.2,
+    "price": 5948.5,
     "entry": 6045.5,
-    "since_rebalance": -0.02,
+    "since_rebalance": -1.6,
     "weight": 0.1429
    },
    {
     "ticker": "SNGSP",
     "name": "Сургнфгз-п",
-    "ret6m": 4.01,
-    "price": 42.12,
+    "ret6m": 4.58,
+    "price": 42.285,
     "entry": 42.91,
-    "since_rebalance": -1.84,
+    "since_rebalance": -1.46,
     "weight": 0.1429
    },
    {
     "ticker": "FLOT",
     "name": "Совкомфлот",
-    "ret6m": 6.03,
-    "price": 84.72,
+    "ret6m": 4.75,
+    "price": 84.07,
     "entry": 81.08,
-    "since_rebalance": 4.49,
+    "since_rebalance": 3.69,
     "weight": 0.1429
    },
    {
     "ticker": "TATNP",
     "name": "Татнфт 3ап",
-    "ret6m": -1.36,
-    "price": 578.9,
+    "ret6m": -1.45,
+    "price": 571.4,
     "entry": 584.1,
-    "since_rebalance": -0.89,
+    "since_rebalance": -2.17,
     "weight": 0.1429
    }
   ],
-  "basket_return_since_rebalance": 0.37,
+  "basket_return_since_rebalance": -0.61,
   "preliminary_top": [
    {
     "ticker": "CBOM",
     "name": "МКБ ао",
-    "ret6m": 74.45
+    "ret6m": 72.31
    },
    {
     "ticker": "CNRU",
     "name": "iЦиан",
-    "ret6m": 45.29
+    "ret6m": 45.6
    },
    {
     "ticker": "POSI",
     "name": "iПозитив",
-    "ret6m": 31.92
+    "ret6m": 32.88
    },
    {
     "ticker": "LKOH",
     "name": "ЛУКОЙЛ",
-    "ret6m": 16.04
+    "ret6m": 16.2
    },
    {
     "ticker": "FLOT",
     "name": "Совкомфлот",
-    "ret6m": 6.03
-   },
-   {
-    "ticker": "UGLD",
-    "name": "ЮГК",
-    "ret6m": 4.18
+    "ret6m": 4.75
    },
    {
     "ticker": "SNGSP",
     "name": "Сургнфгз-п",
-    "ret6m": 4.01
+    "ret6m": 4.58
+   },
+   {
+    "ticker": "UGLD",
+    "name": "ЮГК",
+    "ret6m": 2.4
    }
   ],
   "watch": [
    {
-    "ticker": "NVTK",
-    "name": "Новатэк ао",
-    "ret6m": -0.98
-   },
-   {
     "ticker": "TATNP",
     "name": "Татнфт 3ап",
-    "ret6m": -1.36
+    "ret6m": -1.45
    },
    {
     "ticker": "MDMG",
     "name": "MDMG-ао",
-    "ret6m": -2.0
+    "ret6m": -1.57
+   },
+   {
+    "ticker": "NVTK",
+    "name": "Новатэк ао",
+    "ret6m": -1.65
    }
   ],
   "pending_out": [
