@@ -5,17 +5,17 @@
   "POSI",
   "LKOH",
   "SNGSP",
-  "FLOT",
-  "TATNP"
+  "UGLD",
+  "MDMG"
  ],
  "entry": {
-  "CBOM": 11.219,
+  "CBOM": 9.993,
   "CNRU": 913.2,
-  "FLOT": 81.08,
-  "LKOH": 6045.5,
-  "POSI": 1254.0,
-  "SNGSP": 42.91,
-  "TATNP": 584.1
+  "LKOH": 5763.5,
+  "MDMG": 1244.8,
+  "POSI": 1255.8,
+  "SNGSP": 41.0,
+  "UGLD": 0.6497
  },
- "week": "2026-11-13"
+ "week": "2026-11-20"
 }
